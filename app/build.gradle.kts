@@ -12,8 +12,8 @@ android {
         applicationId = "club.daishenghui.minguo"
         minSdk = 24 // Android 7.0
         targetSdk = 35
-        versionCode = 6
-        versionName = "3.2.0"
+        versionCode = 11
+        versionName = "3.7.0"
     }
 
     // 签名：默认用仓库里的 keystore/minguo.jks（每次编译签名一致，可直接覆盖升级）；

@@ -17,6 +17,8 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.telephony.PhoneStateListener
+import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -92,6 +94,8 @@ class LockService : Service() {
             return START_NOT_STICKY
         }
         L.refresh(this)
+        // App 打开时（前台）拿到了位置权限：把服务升级为“定位”类型，锁屏熄屏后也能更新位置
+        if (!locationActive && wantsLocation(this)) startAsForeground()
         lastContent = ""
         updateNotification()
         // 关闭锁屏或切到“保留系统密码”时，收起悬浮窗
@@ -104,7 +108,13 @@ class LockService : Service() {
         unregisterReceiver(receiver)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             (modeListener as? AudioManager.OnModeChangedListener)?.let { getSystemService(AudioManager::class.java).removeOnModeChangedListener(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            (modeListener as? PhoneStateListener)?.let {
+                runCatching { getSystemService(TelephonyManager::class.java).listen(it, PhoneStateListener.LISTEN_NONE) }
+            }
         }
+        locationActive = false
         handler.removeCallbacksAndMessages(null)
         Region.unwatch(this, networkWatch)
         overlay?.destroy()
@@ -178,12 +188,18 @@ class LockService : Service() {
             getSystemService(AudioManager::class.java).addOnModeChangedListener(mainExecutor, l)
             modeListener = l
         } else {
-            handler.post(object : Runnable {
-                override fun run() {
-                    if (overlay?.isShowing == true || relockAfterCall) onCallStateChanged()
-                    handler.postDelayed(this, 1_500)
+            // Android 11 及以下：监听通话状态（不需要权限），代替原来每 1.5 秒轮询一次，省电
+            @Suppress("DEPRECATION")
+            val l = object : PhoneStateListener() {
+                @Deprecated("Deprecated in Java")
+                override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                    // 回调时音频模式可能还没切换，稍等一下再判断
+                    handler.postDelayed({ this@LockService.onCallStateChanged() }, 300)
                 }
-            })
+            }
+            @Suppress("DEPRECATION")
+            runCatching { getSystemService(TelephonyManager::class.java).listen(l, PhoneStateListener.LISTEN_CALL_STATE) }
+            modeListener = l
         }
     }
 
@@ -258,8 +274,22 @@ class LockService : Service() {
             )
         }
         val n = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val base = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
+            // 带“定位”类型的前台服务：只给了「仅在使用中允许」也能在锁屏、熄屏时定位。
+            // 只有从前台（打开 App）启动时系统才允许；开机自启等后台启动会被拒，这时退回普通类型，
+            // 等下次打开 App 再升级（见 onStartCommand）。
+            if (wantsLocation(this)) {
+                try {
+                    startForeground(NOTIFICATION_ID, n, base or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+                    locationActive = true
+                    return
+                } catch (e: Exception) {
+                    Log.i(TAG, "暂时无法以定位类型运行，下次打开 App 时再试", e)
+                }
+            }
+            locationActive = false
+            if (base != 0) startForeground(NOTIFICATION_ID, n, base) else startForeground(NOTIFICATION_ID, n)
         } else {
             startForeground(NOTIFICATION_ID, n)
         }
@@ -274,6 +304,16 @@ class LockService : Service() {
         fun shouldRun(context: Context) = Prefs(context).let { it.lockEnabled || it.dateNotification }
 
         /** 根据设置启动 / 停止 / 刷新服务 */
+        /** 服务当前是否以“定位”类型在前台运行（此时后台也能定位） */
+        @Volatile
+        var locationActive = false
+            private set
+
+        private fun wantsLocation(context: Context): Boolean {
+            val p = Prefs(context)
+            return p.weatherEnabled && p.autoLocate && Weather.hasLocationPermission(context)
+        }
+
         fun sync(context: Context) {
             val intent = Intent(context, LockService::class.java)
             if (shouldRun(context)) {

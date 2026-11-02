@@ -4,13 +4,15 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
-import android.database.Cursor
 import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
+import android.location.LocationListener
 import android.net.Uri
 import android.os.Build
 import android.os.CancellationSignal
+import android.os.Looper
+import android.os.Bundle
 import android.util.Log
 import androidx.annotation.DrawableRes
 import androidx.core.content.ContextCompat
@@ -125,31 +127,6 @@ enum class Cond(val hans: String, val hant: String, val en: String, @DrawableRes
             else -> UNKNOWN
         }
 
-        /** 小米天气 weather_type（与小米主题文件中的分类一致） */
-        fun fromXiaomi(type: Int): Cond = when (type) {
-            0 -> CLEAR
-            1 -> PARTLY
-            2 -> OVERCAST
-            3 -> FOG
-            4, 5, 6 -> STORM_RAIN
-            7 -> THUNDER
-            8 -> SHOWER
-            9 -> HEAVY_RAIN
-            10 -> RAIN
-            11 -> LIGHT_RAIN
-            12 -> SLEET
-            13 -> BLIZZARD
-            14 -> SNOW_SHOWER
-            15 -> HEAVY_SNOW
-            16 -> SNOW
-            17 -> LIGHT_SNOW
-            18, 19 -> SAND
-            20, 21, 23 -> DUST
-            22 -> HAIL
-            24 -> HAZE
-            25 -> FREEZING_RAIN
-            else -> UNKNOWN
-        }
     }
 }
 
@@ -180,16 +157,22 @@ data class WeatherData(
     val today: DayForecast? get() = days.firstOrNull { it.date == LocalDate.now() }
 
     fun toJson(): String = JSONObject().apply {
-        put("city", city); put("temp", temp); put("feels", feelsLike); put("hum", humidity)
-        put("wind", windKmh); put("cond", cond.name); put("day", isDay); put("aqi", aqi ?: -1)
-        put("uv", uvMax); put("sys", fromSystem); put("at", fetchedAt)
+        // JSONObject 不接受 NaN（会抛异常导致闪退），没有值的数字直接不写
+        fun num(k: String, v: Double) {
+            if (!v.isNaN() && !v.isInfinite()) put(k, v)
+        }
+        put("city", city); num("temp", temp); num("feels", feelsLike); put("hum", humidity)
+        num("wind", windKmh); put("cond", cond.name); put("day", isDay); put("aqi", aqi ?: -1)
+        num("uv", uvMax); put("sys", fromSystem); put("at", fetchedAt)
         put("src", JSONArray(sources)); put("kp", keypoint)
         put("life", JSONArray(lifeIndex)); put("alerts", JSONArray(alerts))
         put("days", JSONArray().apply {
             days.forEach {
                 put(JSONObject().apply {
-                    put("d", it.date.toString()); put("c", it.cond.name); put("max", it.max)
-                    put("min", it.min); put("p", it.rainChance ?: -1)
+                    put("d", it.date.toString()); put("c", it.cond.name)
+                    if (!it.max.isNaN()) put("max", it.max)
+                    if (!it.min.isNaN()) put("min", it.min)
+                    put("p", it.rainChance ?: -1)
                 })
             }
         })
@@ -252,15 +235,19 @@ data class CityResult(
  */
 object Weather {
     private const val TAG = "Weather"
+    // 省电的刷新频率：天气 30 分钟内不重复请求；位置 30 分钟内不重复定位；
+    // 熄屏时由 WorkManager 每小时刷新一次（系统休眠时会顺延），亮屏时超过 30 分钟才刷新
     private const val STALE_MS = 30 * 60 * 1000L
-    private const val RELOCATE_MS = 20 * 60 * 1000L
+    private const val RELOCATE_MS = 30 * 60 * 1000L
+
+    /** 上次自动定位的尝试时间（无论成功与否），用来限制 GPS 频率 */
+    @Volatile
+    private var lastLocateAttempt = 0L
     private const val WORK_NAME = "weather_refresh"
-    const val SRC_XIAOMI = "xiaomi"
     const val SRC_TENCENT = "tencent"
     const val SRC_OPEN_METEO = "open-meteo"
 
     fun sourceLabel(src: String, lang: Lang) = when (src) {
-        SRC_XIAOMI -> tr("小米天气", "小米天氣", "Xiaomi Weather", lang)
         SRC_TENCENT -> tr("腾讯天气", "騰訊天氣", "Tencent Weather", lang)
         else -> "Open-Meteo"
     }
@@ -285,8 +272,14 @@ object Weather {
         loaded = false
     }
 
+    /** 有任意位置权限（精确或大致） */
     fun hasLocationPermission(context: Context) =
-        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            hasPreciseLocation(context)
+
+    /** 精确位置：GPS 定位需要 */
+    fun hasPreciseLocation(context: Context) =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     fun hasBackgroundLocation(context: Context) =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
@@ -303,16 +296,20 @@ object Weather {
             if (!p.weatherEnabled) return@withContext false
 
             // 1. 自动定位
-            val canLocate = p.autoLocate && hasLocationPermission(context) && (inForeground || hasBackgroundLocation(context))
-            if (canLocate && (p.lat.isNaN() || System.currentTimeMillis() - p.locatedAt > RELOCATE_MS)) {
+            // 前台可见、有“始终允许”、或锁屏服务以定位类型运行，都可以定位
+            val canLocate = p.autoLocate && hasLocationPermission(context) &&
+                (inForeground || hasBackgroundLocation(context) || LockService.locationActive)
+            // 30 分钟内定位过、或者尝试过（哪怕失败了）都不再开 GPS，防止搜不到星时反复重试耗电
+            val now = System.currentTimeMillis()
+            val sinceLast = now - maxOf(p.locatedAt, lastLocateAttempt)
+            if (canLocate && (p.lat.isNaN() || sinceLast > RELOCATE_MS) && now - lastLocateAttempt > RELOCATE_MS) {
+                lastLocateAttempt = now
                 locate(context)?.let { r ->
                     setLocation(context, r.name, r.location.latitude, r.location.longitude, r.place)
                     p.locatedAt = System.currentTimeMillis()
                 }
             }
 
-            // 2. 手机自带天气：自动定位开启或尚未设置位置时才用（避免和手动选择的城市对不上）
-            val sys = if (p.useSystemWeather && (p.autoLocate || p.lat.isNaN())) querySystemWeather(context) else null
 
             // 3. 预报：位置在中国大陆 → 腾讯天气（免注册、数据来自中央气象台）；否则 / 失败 → Open-Meteo
             val hasLoc = !p.lat.isNaN() && !p.lon.isNaN()
@@ -335,18 +332,7 @@ object Weather {
                 null
             }
 
-            val merged = when {
-                om != null && sys != null -> om.copy(
-                    city = sys.city.ifBlank { om.city },
-                    temp = sys.temp,
-                    cond = sys.cond,
-                    fromSystem = true,
-                    sources = listOf(SRC_XIAOMI) + om.sources,
-                )
-                om != null -> om
-                sys != null -> sys
-                else -> return@withContext false
-            }
+            val merged = om ?: return@withContext false
             if (merged.city.isNotBlank() && p.cityName.isBlank()) p.cityName = merged.city
             p.weatherCache = merged.toJson()
             _state.value = merged
@@ -360,57 +346,6 @@ object Weather {
         init(context)
         val last = _state.value?.fetchedAt ?: 0L
         if (System.currentTimeMillis() - last > STALE_MS) refresh(context, inForeground)
-    }
-
-    // ---------- 手机自带天气（小米天气） ----------
-
-    private val SYSTEM_URIS = listOf("content://weather/actualWeatherData/1", "content://weather/weather")
-
-    /** 小米天气是否可读（设置页用来显示状态） */
-    fun systemWeatherAvailable(context: Context): Boolean = querySystemWeather(context) != null
-
-    private fun querySystemWeather(context: Context): WeatherData? {
-        for (uri in SYSTEM_URIS) {
-            try {
-                context.contentResolver.query(Uri.parse(uri), null, null, null, null)?.use { c ->
-                    if (!c.moveToFirst()) return@use
-                    val type = c.intOrNull("weather_type") ?: return@use
-                    var temp = c.strOrNull("temperature")?.let { Regex("-?\\d+(\\.\\d+)?").find(it)?.value?.toDoubleOrNull() }
-                        ?: return@use
-                    // temperature_unit：1 = 摄氏，其它 = 华氏
-                    val unit = c.intOrNull("temperature_unit")
-                    if (unit != null && unit != 1) temp = (temp - 32) / 1.8
-                    return WeatherData(
-                        city = c.strOrNull("city_name") ?: "",
-                        temp = temp,
-                        feelsLike = Double.NaN,
-                        humidity = -1,
-                        windKmh = Double.NaN,
-                        cond = Cond.fromXiaomi(type),
-                        isDay = java.time.LocalTime.now().hour in 6..18,
-                        days = emptyList(),
-                        aqi = null,
-                        uvMax = Double.NaN,
-                        fromSystem = true,
-                        fetchedAt = System.currentTimeMillis(),
-                        sources = listOf(SRC_XIAOMI),
-                    )
-                }
-            } catch (e: Exception) {
-                Log.i(TAG, "读取系统天气失败：$uri ${e.javaClass.simpleName}")
-            }
-        }
-        return null
-    }
-
-    private fun Cursor.intOrNull(col: String): Int? {
-        val i = getColumnIndex(col)
-        return if (i < 0 || isNull(i)) null else runCatching { getInt(i) }.getOrNull()
-    }
-
-    private fun Cursor.strOrNull(col: String): String? {
-        val i = getColumnIndex(col)
-        return if (i < 0 || isNull(i)) null else runCatching { getString(i) }.getOrNull()
     }
 
     // ---------- Open-Meteo ----------
@@ -637,32 +572,29 @@ object Weather {
     suspend fun locate(context: Context): Located? {
         if (!hasLocationPermission(context)) return null
         val lm = context.getSystemService(LocationManager::class.java) ?: return null
-        val providers = buildList {
+        fun enabled(p: String) = runCatching { lm.isProviderEnabled(p) }.getOrDefault(false)
+
+        // 主动定位的顺序：GPS（最准，需要精确位置）→ 融合定位 → 网络定位（GPS 搜不到星时兜底）
+        val active = buildList {
+            if (hasPreciseLocation(context)) add(LocationManager.GPS_PROVIDER)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) add(LocationManager.FUSED_PROVIDER)
             add(LocationManager.NETWORK_PROVIDER)
-            add(LocationManager.GPS_PROVIDER)
-            add(LocationManager.PASSIVE_PROVIDER)
-        }.filter { runCatching { lm.isProviderEnabled(it) }.getOrDefault(false) }
+        }.filter(::enabled)
 
-        fun lastKnown() = providers
+        fun lastKnown() = (active + LocationManager.PASSIVE_PROVIDER)
             .mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }
             .maxByOrNull { it.time }
 
-        var loc: Location? = lastKnown()?.takeIf { System.currentTimeMillis() - it.time < 15 * 60 * 1000L }
+        // 系统里刚有一个准确的位置（2 分钟内、误差 50 米内，比如导航刚用过）就直接用，省一次 GPS
+        var loc: Location? = lastKnown()?.takeIf {
+            System.currentTimeMillis() - it.time < 2 * 60 * 1000L && it.hasAccuracy() && it.accuracy <= 50f
+        }
 
-        if (loc == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            for (provider in providers.filter { it != LocationManager.PASSIVE_PROVIDER }) {
-                loc = withTimeoutOrNull(12_000) {
-                    suspendCancellableCoroutine<Location?> { cont ->
-                        val signal = CancellationSignal()
-                        cont.invokeOnCancellation { signal.cancel() }
-                        try {
-                            lm.getCurrentLocation(provider, signal, context.mainExecutor) { cont.resume(it) }
-                        } catch (e: Exception) {
-                            cont.resume(null)
-                        }
-                    }
-                }
+        if (loc == null) {
+            for (provider in active) {
+                // GPS 冷启动搜星需要时间，给 30 秒；室内搜不到就换网络定位
+                val timeout = if (provider == LocationManager.GPS_PROVIDER) 30_000L else 10_000L
+                loc = withTimeoutOrNull(timeout) { currentLocation(context, lm, provider) }
                 if (loc != null) break
             }
         }
@@ -670,6 +602,41 @@ object Weather {
         val place = withContext(Dispatchers.IO) { Geo.reverse(found.latitude, found.longitude) } ?: geocoderPlace(context, found)
         return Located(place?.label ?: "", found, place)
     }
+
+    /** 取一次当前位置。Android 11+ 用 getCurrentLocation，更早的用 requestSingleUpdate；取到后立即停止，不持续耗电 */
+    @SuppressLint("MissingPermission")
+    private suspend fun currentLocation(context: Context, lm: LocationManager, provider: String): Location? =
+        suspendCancellableCoroutine { cont ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val signal = CancellationSignal()
+                cont.invokeOnCancellation { signal.cancel() }
+                try {
+                    lm.getCurrentLocation(provider, signal, context.mainExecutor) { if (cont.isActive) cont.resume(it) }
+                } catch (e: Exception) {
+                    if (cont.isActive) cont.resume(null)
+                }
+            } else {
+                // 旧系统的 LocationListener 没有默认方法，四个回调都要写，否则会崩溃
+                val listener = object : LocationListener {
+                    override fun onLocationChanged(location: Location) {
+                        if (cont.isActive) cont.resume(location)
+                    }
+                    @Deprecated("Deprecated in Java")
+                    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                    override fun onProviderEnabled(provider: String) {}
+                    override fun onProviderDisabled(provider: String) {
+                        if (cont.isActive) cont.resume(null)
+                    }
+                }
+                cont.invokeOnCancellation { runCatching { lm.removeUpdates(listener) } }
+                try {
+                    @Suppress("DEPRECATION")
+                    lm.requestSingleUpdate(provider, listener, Looper.getMainLooper())
+                } catch (e: Exception) {
+                    if (cont.isActive) cont.resume(null)
+                }
+            }
+        }
 
     /** BigDataCloud 不可用时，用系统自带的 Geocoder 反查 */
     @Suppress("DEPRECATION")
@@ -785,7 +752,7 @@ class WeatherWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         val ctx = applicationContext
         val p = Prefs(ctx)
         if (!p.weatherEnabled) return Result.success()
-        if (!Weather.hasLocation(ctx) && !p.useSystemWeather) return Result.success()
+        if (!Weather.hasLocation(ctx) && !(p.autoLocate && Weather.hasLocationPermission(ctx))) return Result.success()
         return if (Weather.refresh(ctx, inForeground = false)) Result.success() else Result.retry()
     }
 }

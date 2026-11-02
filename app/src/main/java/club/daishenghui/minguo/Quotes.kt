@@ -21,6 +21,7 @@ data class Quote(val text: String, val author: String)
  */
 object Quotes {
     private const val TAG = "Quotes"
+    private const val INTERVAL_MS = 30 * 60 * 1000L
     private val mutex = Mutex()
 
     private val _state = MutableStateFlow<Quote?>(null)
@@ -176,26 +177,15 @@ object Quotes {
      */
     suspend fun maybeRotate(context: Context, screenOn: Boolean) {
         init(context)
-        val p = Prefs(context)
-        if (!p.quoteEnabled) return
-        val interval = p.quoteInterval
-        val due = if (interval == 0) {
-            screenOn
-        } else {
-            System.currentTimeMillis() - p.quoteChangedAt >= interval * 60_000L
-        }
-        if (due) next(context)
+        // 固定：每 30 分钟换一句（内置 + 一言混合）
+        if (System.currentTimeMillis() - Prefs(context).quoteChangedAt >= INTERVAL_MS) next(context)
     }
 
     /** 立即换下一句 */
     suspend fun next(context: Context) = mutex.withLock {
         init(context)
         val p = Prefs(context)
-        val online = when (p.quoteSource) {
-            1 -> true
-            2 -> Math.random() < 0.5
-            else -> false
-        }
+        val online = Math.random() < 0.5
         val q = (if (online) fetchHitokoto(context) else null) ?: nextBuiltin(context)
         save(context, q)
         Widgets.updateAll(context)

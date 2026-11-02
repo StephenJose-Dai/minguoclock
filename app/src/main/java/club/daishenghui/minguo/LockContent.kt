@@ -23,8 +23,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -78,6 +81,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
@@ -131,6 +135,45 @@ fun Modifier.placeAt(fx: Float, fy: Float): Modifier = this.layout { measurable,
 private fun keyOf(e: Elem) = "E:" + e.name
 private fun keyOf(s: Sticker) = "S:" + s.id
 
+/**
+ * 拖动 + 双指缩放。手指移动超过系统触摸阈值才算拖动（轻点不会触发，留给“点击选中”），
+ * 拖动开始/结束时回调，用来在拖动期间隐藏参数面板。
+ */
+private fun Modifier.dragZoom(
+    key: Any,
+    onStart: () -> Unit,
+    onEnd: () -> Unit,
+    onChange: (Offset, Float) -> Unit,
+): Modifier = this.pointerInput(key) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false)
+        var moving = false
+        var total = Offset.Zero
+        val slop = viewConfiguration.touchSlop
+        try {
+            while (true) {
+                val event = awaitPointerEvent()
+                if (event.changes.none { it.pressed }) break
+                val zoom = event.calculateZoom()
+                val pan = event.calculatePan()
+                if (!moving) {
+                    total += pan
+                    if (total.getDistance() > slop || (event.changes.size > 1 && zoom != 1f)) {
+                        moving = true
+                        onStart()
+                    }
+                }
+                if (moving) {
+                    onChange(pan, zoom)
+                    event.changes.forEach { if (it.positionChanged()) it.consume() }
+                }
+            }
+        } finally {
+            if (moving) onEnd()
+        }
+    }
+}
+
 @Composable
 fun LockContent(
     ui: LockUi,
@@ -166,6 +209,7 @@ fun LockContent(
     var draft by remember { mutableStateOf(saved) }
     val layout = if (editing) draft else saved
     var selected by remember { mutableStateOf<String?>(null) }
+    var dragging by remember { mutableStateOf(false) }
 
     var look by remember { mutableStateOf(LockLook(theme.text, theme.sub, darkStatusIcons = false, shadow = false)) }
     LaunchedEffect(look.darkStatusIcons) { onStatusIcons(look.darkStatusIcons) }
@@ -251,6 +295,7 @@ fun LockContent(
                             StickerView(
                                 s, sizeScale, editing, selected == keyOf(s),
                                 onSelect = { selected = keyOf(s) },
+                                onDragState = { dragging = it },
                                 onTransform = { pan, zoom ->
                                     val a = area
                                     draft = draft.copy(stickers = draft.stickers.map {
@@ -271,7 +316,7 @@ fun LockContent(
                             Elem.WEATHER -> prefs.weatherEnabled && weather != null
                             Elem.ADVICE -> prefs.weatherEnabled && weather?.let { Weather.advice(it, lang).isNotEmpty() } == true
                             Elem.ALARM -> alarm != null
-                            Elem.QUOTE -> prefs.quoteEnabled && quote != null
+                            Elem.QUOTE -> quote != null
                             Elem.SIGNATURE -> prefs.signature.isNotBlank()
                             else -> true
                         }
@@ -290,9 +335,8 @@ fun LockContent(
                                                     .alpha(if (st.visible) 1f else 0.35f)
                                                     .border(if (isSel) 2.dp else 1.dp, if (isSel) Accent else Color(0x73FFFFFF), RoundedCornerShape(8.dp))
                                                     .pointerInput(e) { detectTapGestures { selected = keyOf(e) } }
-                                                    .pointerInput(e) {
-                                                        detectTransformGestures { _, pan, zoom, _ ->
-                                                            selected = keyOf(e)
+                                                    .dragZoom(e, onStart = { dragging = true }, onEnd = { dragging = false }) { pan, zoom ->
+                                                        run {
                                                             val a = area
                                                             val s0 = draft.style(e)
                                                             draft = draft.with(
@@ -373,7 +417,7 @@ fun LockContent(
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 Icon(Icons.Filled.Notifications, null, tint = sub, modifier = Modifier.size((sizeSp * 1.15f).dp))
                                                 Spacer(Modifier.width(4.dp))
-                                                Text(alarm ?: e.label(lang), color = sub, fontSize = sizeSp.sp, fontFamily = family, fontWeight = weight)
+                                                Text(alarm ?: tr("闹钟（设了闹钟才显示）", "鬧鐘（設了鬧鐘才顯示）", "Alarm (shown only when one is set)", lang), color = sub, fontSize = sizeSp.sp, fontFamily = family, fontWeight = weight)
                                             }
                                         }
                                         Elem.QUOTE -> {
@@ -384,9 +428,6 @@ fun LockContent(
                                                     color = text, fontSize = sizeSp.sp, fontFamily = family, fontWeight = weight,
                                                     lineHeight = (sizeSp * 1.5f).sp, textAlign = TextAlign.Center,
                                                 )
-                                                if (q != null && q.author.isNotBlank()) {
-                                                    Text("—— " + q.author, color = sub, fontSize = (sizeSp * 0.8f).sp, fontFamily = family, modifier = Modifier.padding(top = 2.dp))
-                                                }
                                             }
                                         }
                                         Elem.SIGNATURE -> {
@@ -413,14 +454,6 @@ fun LockContent(
                         Text(tr("正在充电", "正在充電", "Charging", lang) + " · ${battery.percent}%", color = look.sub, fontSize = 13.sp)
                         Spacer(Modifier.height(8.dp))
                     }
-                    val bingInfo = if (prefs.wallpaperMode == Wallpaper.MODE_BING && prefs.showBingInfo) prefs.bingCopyright else ""
-                    if (bingInfo.isNotBlank()) {
-                        Text(
-                            bingInfo, color = look.sub.copy(alpha = 0.7f), fontSize = 11.sp, maxLines = 2,
-                            overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                    }
                     BottomBar(
                         look, lang,
                         hint = if (ui == LockUi.PREVIEW) tr("上滑结束预览", "上滑結束預覽", "Swipe up to exit", lang) else tr("向上滑动解锁", "向上滑動解鎖", "Swipe up to unlock", lang),
@@ -435,7 +468,7 @@ fun LockContent(
         if (editing) {
             EditPanel(
                 draft = draft,
-                selected = selected,
+                selected = if (dragging) null else selected,
                 lang = lang,
                 onDraft = { draft = it },
                 onSelect = { selected = it },
@@ -463,6 +496,7 @@ private fun StickerView(
     editing: Boolean,
     isSelected: Boolean,
     onSelect: () -> Unit,
+    onDragState: (Boolean) -> Unit,
     onTransform: (Offset, Float) -> Unit,
 ) {
     val ctx = LocalContext.current
@@ -475,6 +509,7 @@ private fun StickerView(
     val b = bmp ?: return
     val onSel by rememberUpdatedState(onSelect)
     val onTr by rememberUpdatedState(onTransform)
+    val onDrag by rememberUpdatedState(onDragState)
     Image(
         b,
         contentDescription = null,
@@ -486,12 +521,7 @@ private fun StickerView(
                     Modifier
                         .border(if (isSelected) 2.dp else 1.dp, if (isSelected) Accent else Color(0x73FFFFFF), RoundedCornerShape(6.dp))
                         .pointerInput(s.id) { detectTapGestures { onSel() } }
-                        .pointerInput(s.id) {
-                            detectTransformGestures { _, pan, zoom, _ ->
-                                onSel()
-                                onTr(pan, zoom)
-                            }
-                        }
+                        .dragZoom(s.id, onStart = { onDrag(true) }, onEnd = { onDrag(false) }) { pan, zoom -> onTr(pan, zoom) }
                 } else {
                     Modifier
                 },

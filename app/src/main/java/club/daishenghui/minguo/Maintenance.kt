@@ -96,7 +96,7 @@ object Maintenance {
             "Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
         if (AppConfig.FEEDBACK_EMAIL.isNotBlank()) {
             val i = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + AppConfig.FEEDBACK_EMAIL))
-                .putExtra(Intent.EXTRA_SUBJECT, tr("民国时钟反馈", "民國時鐘回饋", "Minguo Clock feedback"))
+                .putExtra(Intent.EXTRA_SUBJECT, tr("民国纪年反馈", "民國紀年回饋", "ROC Calendar feedback"))
                 .putExtra(Intent.EXTRA_TEXT, info)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             if (runCatching { context.startActivity(i) }.isSuccess) return

@@ -8,7 +8,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.provider.AlarmClock
 import android.view.View
 import android.widget.RemoteViews
 import kotlinx.coroutines.CoroutineScope
@@ -18,8 +17,11 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
 
-/** 所有小组件共用的刷新逻辑 */
-open class BaseWidget : AppWidgetProvider() {
+/**
+ * 桌面小组件（一个整块）：时分秒 + 民国日期 + 农历 + 天气 + 名言。
+ * 点天气打开本 App 的天气页，点名言换一句，点其他地方打开本 App。
+ */
+class ClockWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         val pending = goAsync()
         Widgets.scope.launch {
@@ -57,186 +59,95 @@ open class BaseWidget : AppWidgetProvider() {
     }
 }
 
-/** 4x2：时分秒 + 民国日期 + 农历 + 天气 */
-class ClockWidget : BaseWidget()
-
-/** 2x2：日历方块 */
-class DateWidget : BaseWidget()
-
-/** 4x1：天气 + 建议 */
-class WeatherWidget : BaseWidget()
-
-/** 4x1：名言（点按换一句） */
-class QuoteWidget : BaseWidget()
-
 object Widgets {
     const val ACTION_REFRESH = "club.daishenghui.minguo.REFRESH_WIDGET"
     const val ACTION_NEXT_QUOTE = "club.daishenghui.minguo.NEXT_QUOTE"
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    data class Kind(val cls: Class<out AppWidgetProvider>, val hans: String, val hant: String, val en: String) {
-        fun label(lang: Lang = L.current) = tr(hans, hant, en, lang)
-    }
-
-    val kinds = listOf(
-        Kind(ClockWidget::class.java, "时钟（4×2）", "時鐘（4×2）", "Clock (4×2)"),
-        Kind(DateWidget::class.java, "日历方块（2×2）", "日曆方塊（2×2）", "Calendar (2×2)"),
-        Kind(WeatherWidget::class.java, "天气（4×1）", "天氣（4×1）", "Weather (4×1)"),
-        Kind(QuoteWidget::class.java, "名言（4×1）", "名言（4×1）", "Quote (4×1)"),
-    )
-
     fun updateAll(context: Context) {
         val mgr = AppWidgetManager.getInstance(context)
-        update(context, mgr, ClockWidget::class.java) { clock(it) }
-        update(context, mgr, DateWidget::class.java) { date(it) }
-        update(context, mgr, WeatherWidget::class.java) { weather(it) }
-        update(context, mgr, QuoteWidget::class.java) { quote(it) }
+        val ids = mgr.getAppWidgetIds(ComponentName(context, ClockWidget::class.java))
+        if (ids.isNotEmpty()) {
+            runCatching { build(context) }.getOrNull()?.let { views -> ids.forEach { mgr.updateAppWidget(it, views) } }
+        }
         scheduleMidnight(context)
     }
 
-    private fun update(context: Context, mgr: AppWidgetManager, cls: Class<out AppWidgetProvider>, build: (Context) -> RemoteViews) {
-        val ids = mgr.getAppWidgetIds(ComponentName(context, cls))
-        if (ids.isEmpty()) return
-        val views = runCatching { build(context) }.getOrNull() ?: return
-        ids.forEach { mgr.updateAppWidget(it, views) }
-    }
-
-    fun requestPin(context: Context, cls: Class<out AppWidgetProvider>): Boolean {
+    fun requestPin(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
         val mgr = AppWidgetManager.getInstance(context)
         if (!mgr.isRequestPinAppWidgetSupported) return false
-        return mgr.requestPinAppWidget(ComponentName(context, cls), null, null)
+        return mgr.requestPinAppWidget(ComponentName(context, ClockWidget::class.java), null, null)
     }
 
-    // ---------- 样式 ----------
-
-    private data class Colors(val main: Int, val sub: Int, val bg: Int)
-
-    private fun colors(context: Context) = when (Prefs(context).widgetStyle) {
-        1 -> Colors(0xFF1E1E1E.toInt(), 0xB31E1E1E.toInt(), 0)
-        2 -> Colors(0xFFFFFFFF.toInt(), 0xCCFFFFFF.toInt(), R.drawable.widget_card_bg)
-        else -> Colors(0xFFFFFFFF.toInt(), 0xDDFFFFFF.toInt(), 0)
-    }
-
-    private fun RemoteViews.applyBg(c: Colors) = setInt(R.id.widget_root, "setBackgroundResource", c.bg)
-
-    // ---------- 各小组件 ----------
-
-    private fun clock(context: Context): RemoteViews {
+    private fun build(context: Context): RemoteViews {
         val p = Prefs(context)
         val style = p.style()
-        val c = colors(context)
+        val lang = style.lang
+        // 0 = 白字（透明背景），1 = 深色字（透明背景），2 = 卡片（半透明深色圆角背景 + 白字）
+        val dark = p.widgetStyle == 1
+        val main = if (dark) 0xFF1E1E1E.toInt() else 0xFFFFFFFF.toInt()
+        val sub = if (dark) 0xB31E1E1E.toInt() else 0xDDFFFFFF.toInt()
         val today = LocalDate.now()
         val rv = RemoteViews(context.packageName, R.layout.widget_clock)
-        rv.applyBg(c)
-        rv.setTextViewText(R.id.widget_date, RocCalendar.dateLine(today, style) + "  " + RocCalendar.weekday(today, style.lang))
+        rv.setInt(R.id.widget_root, "setBackgroundResource", if (p.widgetStyle == 2) R.drawable.widget_card_bg else 0)
+
+        rv.setTextViewText(R.id.widget_date, RocCalendar.dateLine(today, style) + "  " + RocCalendar.weekday(today, lang))
         rv.setTextViewText(R.id.widget_lunar, RocCalendar.lunarLine(System.currentTimeMillis(), style))
         rv.setViewVisibility(R.id.widget_seconds, if (p.showSeconds) View.VISIBLE else View.GONE)
-        rv.setTextColor(R.id.widget_time, c.main)
-        rv.setTextColor(R.id.widget_date, c.main)
-        rv.setTextColor(R.id.widget_seconds, c.sub)
-        rv.setTextColor(R.id.widget_lunar, c.sub)
+        rv.setTextColor(R.id.widget_time, main)
+        rv.setTextColor(R.id.widget_date, main)
+        rv.setTextColor(R.id.widget_seconds, sub)
+        rv.setTextColor(R.id.widget_lunar, sub)
 
+        // 天气
         Weather.init(context)
         val w = Weather.state.value
         if (p.weatherEnabled && w != null) {
             rv.setViewVisibility(R.id.widget_weather_row, View.VISIBLE)
             rv.setImageViewResource(R.id.widget_weather_icon, w.cond.icon(w.isDay))
-            rv.setInt(R.id.widget_weather_icon, "setColorFilter", c.main)
-            rv.setTextViewText(R.id.widget_weather, Weather.summary(w, style.lang) + "  ·  " + Weather.cityLabel(w, style.lang))
-            rv.setTextColor(R.id.widget_weather, c.sub)
+            rv.setInt(R.id.widget_weather_icon, "setColorFilter", main)
+            val tip = Weather.advice(w, lang).firstOrNull()
+            rv.setTextViewText(
+                R.id.widget_weather,
+                Weather.summary(w, lang) + "  ·  " + Weather.cityLabel(w, lang) + (if (tip != null) "\n$tip" else ""),
+            )
+            rv.setTextColor(R.id.widget_weather, sub)
         } else {
             rv.setViewVisibility(R.id.widget_weather_row, View.GONE)
         }
-        rv.setOnClickPendingIntent(R.id.widget_root, activity(context, 2, alarmsIntent(context)))
-        return rv
-    }
 
-    private fun date(context: Context): RemoteViews {
-        val style = Prefs(context).style()
-        val c = colors(context)
-        val today = LocalDate.now()
-        val rv = RemoteViews(context.packageName, R.layout.widget_date)
-        rv.applyBg(c)
-        rv.setTextViewText(R.id.widget_ym, RocCalendar.yearMonth(today, style))
-        rv.setTextViewText(R.id.widget_day, today.dayOfMonth.toString())
-        rv.setTextViewText(R.id.widget_week, RocCalendar.weekday(today, style.lang))
-        rv.setTextViewText(R.id.widget_lunar, RocCalendar.lunarShort(System.currentTimeMillis(), style))
-        rv.setTextColor(R.id.widget_ym, c.sub)
-        rv.setTextColor(R.id.widget_day, c.main)
-        rv.setTextColor(R.id.widget_week, c.main)
-        rv.setTextColor(R.id.widget_lunar, c.sub)
-        val calendar = Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CALENDAR)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        val target = if (calendar.resolveActivity(context.packageManager) != null) calendar else appIntent(context)
-        rv.setOnClickPendingIntent(R.id.widget_root, activity(context, 3, target))
-        return rv
-    }
-
-    private fun weather(context: Context): RemoteViews {
-        val p = Prefs(context)
-        val lang = p.style().lang
-        val c = colors(context)
-        val rv = RemoteViews(context.packageName, R.layout.widget_weather)
-        rv.applyBg(c)
-        Weather.init(context)
-        val w = Weather.state.value
-        if (w == null || !p.weatherEnabled) {
-            rv.setTextViewText(R.id.widget_temp, "--°")
-            rv.setTextViewText(R.id.widget_cond, tr("暂无天气", "暫無天氣", "No weather yet", lang))
-            rv.setTextViewText(R.id.widget_city, "")
-            rv.setTextViewText(R.id.widget_tip, tr("打开 App 设置位置", "開啟 App 設定位置", "Open the app to set a location", lang))
-            rv.setImageViewResource(R.id.widget_weather_icon, R.drawable.weather_cloud)
-        } else {
-            rv.setImageViewResource(R.id.widget_weather_icon, w.cond.icon(w.isDay))
-            rv.setTextViewText(R.id.widget_temp, Weather.temp(w.temp))
-            val range = w.today?.let { "  " + Weather.temp(it.min) + "/" + Weather.temp(it.max) } ?: ""
-            rv.setTextViewText(R.id.widget_cond, w.cond.label(lang) + range)
-            val aqi = w.aqi?.let { "  " + tr("空气", "空氣", "AQI", lang) + " " + Weather.aqiLabel(it, lang) } ?: ""
-            rv.setTextViewText(R.id.widget_city, Weather.cityLabel(w, lang) + aqi)
-            rv.setTextViewText(R.id.widget_tip, Weather.advice(w, lang).firstOrNull() ?: "")
-        }
-        rv.setInt(R.id.widget_weather_icon, "setColorFilter", c.main)
-        rv.setTextColor(R.id.widget_temp, c.main)
-        rv.setTextColor(R.id.widget_cond, c.main)
-        rv.setTextColor(R.id.widget_city, c.sub)
-        rv.setTextColor(R.id.widget_tip, c.sub)
-        val miWeather = context.packageManager.getLaunchIntentForPackage("com.miui.weather2")
-        rv.setOnClickPendingIntent(R.id.widget_root, activity(context, 4, miWeather ?: appIntent(context)))
-        return rv
-    }
-
-    private fun quote(context: Context): RemoteViews {
-        val lang = Prefs(context).style().lang
-        val c = colors(context)
-        val rv = RemoteViews(context.packageName, R.layout.widget_quote)
-        rv.applyBg(c)
+        // 名言（不显示出处）
         Quotes.init(context)
         val q = Quotes.state.value?.let { Quotes.display(it, lang) }
-        rv.setTextViewText(R.id.widget_quote, if (q == null) "" else "「" + q.text + "」")
-        rv.setTextViewText(R.id.widget_author, if (q == null || q.author.isBlank()) "" else "—— " + q.author)
-        rv.setTextColor(R.id.widget_quote, c.main)
-        rv.setTextColor(R.id.widget_author, c.sub)
-        val next = PendingIntent.getBroadcast(
-            context, 5,
-            Intent(context, QuoteWidget::class.java).setAction(ACTION_NEXT_QUOTE),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        if (q != null) {
+            rv.setViewVisibility(R.id.widget_quote, View.VISIBLE)
+            rv.setTextViewText(R.id.widget_quote, "「" + q.text + "」")
+            rv.setTextColor(R.id.widget_quote, main)
+        } else {
+            rv.setViewVisibility(R.id.widget_quote, View.GONE)
+        }
+
+        rv.setOnClickPendingIntent(R.id.widget_root, openApp(context, 2, null))
+        rv.setOnClickPendingIntent(R.id.widget_weather_row, openApp(context, 3, MainActivity.PAGE_WEATHER))
+        rv.setOnClickPendingIntent(
+            R.id.widget_quote,
+            PendingIntent.getBroadcast(
+                context, 5,
+                Intent(context, ClockWidget::class.java).setAction(ACTION_NEXT_QUOTE),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            ),
         )
-        rv.setOnClickPendingIntent(R.id.widget_root, next)
         return rv
     }
 
-    // ---------- 工具 ----------
-
-    private fun appIntent(context: Context) = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
-    private fun alarmsIntent(context: Context): Intent {
-        val alarms = Intent(AlarmClock.ACTION_SHOW_ALARMS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        return if (alarms.resolveActivity(context.packageManager) != null) alarms else appIntent(context)
+    /** 打开本 App（可指定页面） */
+    private fun openApp(context: Context, code: Int, page: String?): PendingIntent {
+        val i = Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        if (page != null) i.putExtra(MainActivity.EXTRA_PAGE, page)
+        return PendingIntent.getActivity(context, code, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
-
-    private fun activity(context: Context, code: Int, intent: Intent): PendingIntent =
-        PendingIntent.getActivity(context, code, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
     /** 每天零点刷新日期/农历 */
     fun scheduleMidnight(context: Context) {

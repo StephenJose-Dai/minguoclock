@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">民国时钟 调试版</string>
+    <string name="app_name">民国纪年 调试版</string>
+
+    <string name="launcher_name_0">民国纪年 调试版</string>
+    <string name="launcher_name_1">民国时钟 调试版</string>
+    <string name="launcher_name_2">民国数位时钟表 调试版</string>
 </resources>

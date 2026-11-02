@@ -3,9 +3,10 @@
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@android:color/transparent"
     android:gravity="center"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:padding="8dp">
 
     <LinearLayout
         android:layout_width="wrap_content"
@@ -26,7 +27,7 @@
             android:shadowDy="2"
             android:shadowRadius="6"
             android:textColor="#FFFFFFFF"
-            android:textSize="58sp" />
+            android:textSize="56sp" />
 
         <TextClock
             android:id="@+id/widget_seconds"
@@ -49,12 +50,12 @@
         android:id="@+id/widget_date"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="2dp"
         android:letterSpacing="0.08"
         android:shadowColor="#55000000"
         android:shadowDy="1"
         android:shadowRadius="4"
-        android:text="民國115年11月2日  星期一"
+        android:text="民國115年11月3日  星期二"
         android:textColor="#FFFFFFFF"
         android:textSize="16sp" />
 
@@ -62,12 +63,11 @@
         android:id="@+id/widget_lunar"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
         android:letterSpacing="0.06"
         android:shadowColor="#55000000"
         android:shadowDy="1"
         android:shadowRadius="4"
-        android:text="農曆丙午馬年 九月廿四"
+        android:text="農曆丙午馬年 九月廿五"
         android:textColor="#DDFFFFFF"
         android:textSize="13sp" />
 
@@ -75,16 +75,16 @@
         android:id="@+id/widget_weather_row"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="6dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:visibility="gone">
 
         <ImageView
             android:id="@+id/widget_weather_icon"
-            android:layout_width="16dp"
-            android:layout_height="16dp"
-            android:layout_marginEnd="5dp"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginEnd="6dp"
             android:importantForAccessibility="no"
             android:src="@drawable/weather_partly" />
 
@@ -92,11 +92,28 @@
             android:id="@+id/widget_weather"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:maxLines="2"
             android:shadowColor="#55000000"
             android:shadowDy="1"
             android:shadowRadius="4"
-            android:text="多雲 18°  15°/22°"
+            android:text="多雲 18°  15°/22°  ·  福州"
             android:textColor="#DDFFFFFF"
             android:textSize="13sp" />
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_quote"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:lineSpacingMultiplier="1.15"
+        android:maxLines="2"
+        android:shadowColor="#55000000"
+        android:shadowDy="1"
+        android:shadowRadius="4"
+        android:text="「願你出走半生，歸來仍是少年。」"
+        android:textColor="#FFFFFFFF"
+        android:textSize="14sp" />
 </LinearLayout>

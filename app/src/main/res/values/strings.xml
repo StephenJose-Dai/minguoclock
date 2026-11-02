@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">民国时钟</string>
-    <string name="widget_name">民国时钟</string>
-    <string name="widget_desc">时分秒 + 民国日期 + 农历 + 天气</string>
-    <string name="widget_date_name">民国日历</string>
-    <string name="widget_date_desc">日历方块：民国年月、日期、星期、农历</string>
-    <string name="widget_weather_name">民国天气</string>
-    <string name="widget_weather_desc">当前天气、温度范围和生活建议</string>
-    <string name="widget_quote_name">每日名言</string>
-    <string name="widget_quote_desc">名言警句，点按换一句</string>
+    <string name="app_name">民国纪年</string>
+    <string name="widget_name">民国纪年</string>
+    <string name="widget_desc">时间 + 民国日期 + 农历 + 天气 + 名言</string>
+
+    <string name="launcher_name_0">民国纪年</string>
+    <string name="launcher_name_1">民国时钟</string>
+    <string name="launcher_name_2">民国数位时钟表</string>
 </resources>

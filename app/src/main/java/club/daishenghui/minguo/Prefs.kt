@@ -18,6 +18,9 @@ class Prefs(context: Context) {
 
     fun clearAll() = sp.edit().clear().commit()
 
+    /** 已经请求过的运行时权限（用于判断“不再询问”） */
+    var askedPermissions: String get() = str("asked_permissions") ?: ""; set(v) = putStr("asked_permissions", v)
+
     // ---- 锁屏 ----
     var lockEnabled: Boolean get() = bool("lock_enabled", false); set(v) = putBool("lock_enabled", v)
 

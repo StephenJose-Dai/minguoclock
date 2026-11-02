@@ -59,7 +59,7 @@ jobs:
           done
           ls -la dist
           {
-            echo "## 民国时钟 v${VERSION}"
+            echo "## 民国纪年 v${VERSION}"
             echo ""
             echo "| 文件 | 大小 |"
             echo "|---|---|"

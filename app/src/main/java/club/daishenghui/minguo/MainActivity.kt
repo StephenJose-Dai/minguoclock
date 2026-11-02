@@ -97,6 +97,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -129,7 +130,7 @@ private val Good = Color(0xFF5BD68A)
 private val Warn = Color(0xFFFFB454)
 private val Danger = Color(0xFFFF6B6B)
 
-private enum class Page { HOME, SETTINGS, LOCK_MODE, APPEARANCE, DATE_LANG, WEATHER, QUOTES, WIDGETS, PERMISSIONS, ABOUT }
+private enum class Page { HOME, SETTINGS, LOCK_MODE, APPEARANCE, DATE_LANG, WEATHER, WIDGETS, PERMISSIONS, ABOUT }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -143,20 +144,39 @@ class MainActivity : ComponentActivity() {
         Weather.schedule(this)
         Wallpaper.schedule(this)
         Watchdog.schedule(this)
+        requestedPage.value = intent?.getStringExtra(EXTRA_PAGE)
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(primary = Accent, onPrimary = OnAccent, background = PageBg, surface = CardBg),
             ) {
-                Surface(Modifier.fillMaxSize(), color = PageBg) { App() }
+                Surface(Modifier.fillMaxSize(), color = PageBg) { PermissionGate { App() } }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        requestedPage.value = intent.getStringExtra(EXTRA_PAGE)
     }
 
     override fun onResume() {
         super.onResume()
         L.refresh(this)
+        IconSwitcher.publishShortcuts(this)
+        // 在前台时同步一次服务：刚授权位置后，服务会升级为可在锁屏时定位
+        LockService.sync(this)
+    }
+
+    companion object {
+        /** 从小组件等处打开指定页面 */
+        const val EXTRA_PAGE = "page"
+        const val PAGE_WEATHER = "weather"
     }
 }
+
+/** 外部请求打开的页面（小组件点天气 → 天气页） */
+private val requestedPage = mutableStateOf<String?>(null)
 
 // =====================================================================
 // 导航
@@ -175,6 +195,11 @@ private fun App() {
         onDispose { owner.lifecycle.removeObserver(obs) }
     }
     LaunchedEffect(Unit) { Weather.refreshIfStale(ctx, inForeground = true) }
+    val req = requestedPage.value
+    LaunchedEffect(req) {
+        if (req == MainActivity.PAGE_WEATHER) page = Page.WEATHER
+        if (req != null) requestedPage.value = null
+    }
 
     BackHandler(enabled = page != Page.HOME) {
         page = if (page == Page.SETTINGS) Page.HOME else Page.SETTINGS
@@ -202,7 +227,6 @@ private fun App() {
                 Page.APPEARANCE -> AppearancePage()
                 Page.DATE_LANG -> DateLangPage()
                 Page.WEATHER -> WeatherPage()
-                Page.QUOTES -> QuotesPage()
                 Page.WIDGETS -> WidgetsPage()
                 Page.PERMISSIONS -> PermissionsPage(resumeTick)
                 Page.ABOUT -> AboutPage()
@@ -215,13 +239,12 @@ private fun App() {
 @Composable
 private fun TopBar(page: Page, onBack: () -> Unit, onSettings: () -> Unit) {
     val title = when (page) {
-        Page.HOME -> tr("民国时钟", "民國時鐘", "Minguo Clock")
+        Page.HOME -> IconSwitcher.displayName(LocalContext.current)
         Page.SETTINGS -> tr("设置", "設定", "Settings")
         Page.LOCK_MODE -> tr("锁屏模式与密码", "鎖定畫面模式與密碼", "Lock mode and PIN")
         Page.APPEARANCE -> tr("壁纸与字体", "桌布與字型", "Wallpaper and fonts")
         Page.DATE_LANG -> tr("日期与语言", "日期與語言", "Date and language")
         Page.WEATHER -> tr("天气", "天氣", "Weather")
-        Page.QUOTES -> tr("名言", "名言", "Quotes")
         Page.WIDGETS -> tr("桌面小组件", "桌面小工具", "Widgets")
         Page.PERMISSIONS -> tr("权限检查", "權限檢查", "Permissions")
         Page.ABOUT -> tr("关于", "關於", "About")
@@ -353,12 +376,8 @@ private fun HomePage(go: (Page) -> Unit) {
         val q = quote?.let { Quotes.display(it, lang) }
         if (q != null) {
             Text("「${q.text}」", color = Color.White, fontSize = 15.sp, lineHeight = 22.sp)
-            if (q.author.isNotBlank()) Text("—— ${q.author}", color = SubText, fontSize = 12.sp)
         }
-        Row {
-            TextButton(onClick = { scope.launch { Quotes.next(ctx) } }) { Text(tr("换一句", "換一句", "Next"), color = Accent) }
-            TextButton(onClick = { go(Page.QUOTES) }) { Text(tr("名言设置", "名言設定", "Quote settings"), color = Accent) }
-        }
+        TextButton(onClick = { scope.launch { Quotes.next(ctx) } }) { Text(tr("换一句", "換一句", "Next"), color = Accent) }
     }
 
     Section(tr("快捷设置", "快捷設定", "Shortcuts")) {
@@ -395,7 +414,6 @@ private fun SettingsPage(go: (Page) -> Unit) {
     }
     Section(tr("内容", "內容", "Content")) {
         MenuRow(tr("天气", "天氣", "Weather"), null) { go(Page.WEATHER) }
-        MenuRow(tr("名言", "名言", "Quotes"), null) { go(Page.QUOTES) }
         MenuRow(tr("桌面小组件", "桌面小工具", "Widgets"), null) { go(Page.WIDGETS) }
         SwitchRow(
             tr("通知栏民国日期", "通知欄民國日期", "ROC date in notifications"),
@@ -406,28 +424,6 @@ private fun SettingsPage(go: (Page) -> Unit) {
             prefs.dateNotification = it
             LockService.sync(ctx)
         }
-    }
-    Section(tr("网络线路", "網路線路", "Network route")) {
-        var override by remember { mutableIntStateOf(prefs.regionOverride) }
-        var regionText by remember { mutableStateOf(Region.describe()) }
-        LaunchedEffect(override) {
-            Region.invalidate()
-            Region.isMainland(ctx)
-            regionText = Region.describe()
-        }
-        ChoiceRow(listOf(tr("自动判断", "自動判斷", "Auto"), tr("中国大陆", "中國大陸", "Mainland"), tr("境外", "境外", "Overseas")), override) {
-            override = it
-            prefs.regionOverride = it
-        }
-        Spacer(Modifier.height(6.dp))
-        Paragraph(
-            tr("当前：", "目前：", "Now: ") + regionText + "\n" +
-                tr(
-                    "自动判断顺序：出口 IP → 定位 → SIM 卡 / 时区。大陆走 cn.bing.com、v1.hitokoto.cn；境外走 www.bing.com、international.v1.hitokoto.cn。",
-                    "自動判斷順序：出口 IP → 定位 → SIM 卡 / 時區。大陸走 cn.bing.com、v1.hitokoto.cn；境外走 www.bing.com、international.v1.hitokoto.cn。",
-                    "Auto order: exit IP → location → SIM / time zone. Mainland uses cn.bing.com and v1.hitokoto.cn; overseas uses www.bing.com and international.v1.hitokoto.cn.",
-                ),
-        )
     }
     Section(tr("系统", "系統", "System")) {
         MenuRow(tr("权限检查", "權限檢查", "Permissions"), null) { go(Page.PERMISSIONS) }
@@ -641,11 +637,11 @@ private fun AppearancePage() {
     var themeIndex by remember { mutableIntStateOf(prefs.themeIndex) }
     var wallMode by remember { mutableIntStateOf(prefs.wallpaperMode) }
     var dim by remember { mutableFloatStateOf(prefs.wallpaperDim.toFloat()) }
-    var showBingInfo by remember { mutableStateOf(prefs.showBingInfo) }
-    var bingCopyright by remember { mutableStateOf(prefs.bingCopyright) }
     var busy by remember { mutableStateOf(false) }
     val fontsVersion by Fonts.version.collectAsState()
-    val fonts = remember(fontsVersion) { Fonts.list(ctx).filter { it.id.startsWith("file:") } }
+    val allFonts = remember(fontsVersion) { Fonts.list(ctx) }
+    val fonts = allFonts.filter { it.id.startsWith("file:") }
+    val builtinFonts = allFonts.filter { !it.id.startsWith("file:") }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
@@ -669,7 +665,6 @@ private fun AppearancePage() {
             busy = true
             val ok = Wallpaper.refreshBing(ctx, force)
             busy = false
-            bingCopyright = prefs.bingCopyright
             if (!ok) toast(ctx, tr("必应壁纸下载失败，请检查网络", "Bing 桌布下載失敗，請檢查網路", "Couldn't download the Bing wallpaper"))
         }
     }
@@ -679,9 +674,6 @@ private fun AppearancePage() {
             wallMode = m
             prefs.wallpaperMode = m
             Wallpaper.schedule(ctx)
-            if (m == Wallpaper.MODE_CUSTOM && Wallpaper.fileFor(ctx, m) == null) {
-                pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-            }
             if (m == Wallpaper.MODE_BING) refreshBing(false)
         }
         Spacer(Modifier.height(12.dp))
@@ -698,18 +690,7 @@ private fun AppearancePage() {
                 onClick = { pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(tr("从相册选择图片", "從相簿選擇圖片", "Choose from gallery")) }
-            else -> {
-                if (bingCopyright.isNotBlank()) Paragraph(bingCopyright)
-                val (sw, sh) = remember { Wallpaper.screenSize(ctx) }
-                Paragraph(
-                    tr("按屏幕 ${sw}×${sh} 自动选择竖版或超清版本，每天更新", "依螢幕 ${sw}×${sh} 自動選擇直式或超清版本，每天更新", "Picks the best size for your ${sw}×${sh} screen, daily"),
-                )
-                TextButton(onClick = { refreshBing(true) }) { Text(tr("立即更新", "立即更新", "Update now"), color = Accent) }
-                SwitchRow(tr("锁屏显示图片说明", "鎖定畫面顯示圖片說明", "Show photo caption"), null, showBingInfo) {
-                    showBingInfo = it
-                    prefs.showBingInfo = it
-                }
-            }
+            else -> TextButton(onClick = { refreshBing(true) }) { Text(tr("立即更新", "立即更新", "Update now"), color = Accent) }
         }
         if (wallMode != Wallpaper.MODE_THEME) {
             Spacer(Modifier.height(8.dp))
@@ -733,6 +714,24 @@ private fun AppearancePage() {
                 "Set each element's font, size and weight in Edit layout. Manage imported TTF/OTF fonts here.",
             ),
         )
+        Spacer(Modifier.height(8.dp))
+        Text(tr("内置字体", "內建字型", "Built-in fonts"), color = SubText, fontSize = 13.sp)
+        builtinFonts.forEach { f ->
+            Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(f.label(), color = SubText, fontSize = 13.sp, modifier = Modifier.width(96.dp))
+                Text(
+                    tr("民国一一五年 12:45", "民國一一五年 12:45", "ROC 115 12:45"),
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontFamily = Fonts.family(ctx, f.id),
+                    maxLines = 1,
+                )
+            }
+        }
+        if (fonts.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(tr("导入的字体", "匯入的字型", "Imported fonts"), color = SubText, fontSize = 13.sp)
+        }
         fonts.forEach { f ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(f.label(), color = Color.White, fontSize = 15.sp, fontFamily = Fonts.family(ctx, f.id), modifier = Modifier.weight(1f))
@@ -826,14 +825,9 @@ private fun WeatherPage() {
     val weather by Weather.state.collectAsState()
     var enabled by remember { mutableStateOf(prefs.weatherEnabled) }
     var autoLocate by remember { mutableStateOf(prefs.autoLocate) }
-    var useSystem by remember { mutableStateOf(prefs.useSystemWeather) }
     var city by remember { mutableStateOf(prefs.cityName) }
     var busy by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
-    var systemOk by remember { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(useSystem) {
-        systemOk = if (useSystem) withContext(Dispatchers.IO) { Weather.systemWeatherAvailable(ctx) } else null
-    }
 
     fun refreshNow() {
         scope.launch {
@@ -862,11 +856,11 @@ private fun WeatherPage() {
         }
     }
 
-    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) locateNow() else toast(ctx, tr("没有位置权限，可以改用“搜索城市”", "沒有位置權限，可以改用「搜尋城市」", "No location permission — search a city instead"))
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+        if (Weather.hasLocationPermission(ctx)) locateNow() else toast(ctx, tr("没有位置权限，可以改用“搜索城市”", "沒有位置權限，可以改用「搜尋城市」", "No location permission — search a city instead"))
     }
     fun locateWithPermission() {
-        if (Weather.hasLocationPermission(ctx)) locateNow() else permLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+        if (Weather.hasPreciseLocation(ctx)) locateNow() else permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
     }
 
     Section(tr("天气", "天氣", "Weather")) {
@@ -894,34 +888,6 @@ private fun WeatherPage() {
         weather?.let {
             Spacer(Modifier.height(8.dp))
             WeatherCard(it, lang) { refreshNow() }
-        }
-    }
-
-    if (enabled) {
-        Section(tr("数据来源", "資料來源", "Data sources")) {
-            Paragraph(
-                tr(
-                    "全部免注册、免申请：\n① 小米手机：当前温度和天气现象直接读小米天气，和手机上看到的一致；\n② 位置在中国大陆：腾讯天气（中央气象台数据）提供 7 天预报、逐小时降水、生活指数、预警和空气质量；\n③ 境外或腾讯不可用：Open-Meteo（含未来 2 小时降水预报）。\n省市区由 BigDataCloud 免费反查。",
-                    "全部免註冊、免申請：\n① 小米手機：目前溫度和天氣現象直接讀小米天氣，和手機上看到的一致；\n② 位置在中國大陸：騰訊天氣（中央氣象台資料）提供 7 天預報、逐小時降雨、生活指數、預警和空氣品質；\n③ 境外或騰訊不可用：Open-Meteo（含未來 2 小時降雨預報）。\n省市區由 BigDataCloud 免費反查。",
-                    "No sign-up needed: ① Xiaomi phones read Xiaomi Weather for current conditions; ② in mainland China, Tencent Weather (China Meteorological data) provides forecast, hourly rain, life index, alerts and AQI; ③ elsewhere, Open-Meteo. Place names via BigDataCloud.",
-                ),
-            )
-            if (isXiaomi) {
-                Spacer(Modifier.height(8.dp))
-                SwitchRow(
-                    tr("读取小米天气", "讀取小米天氣", "Read Xiaomi Weather"),
-                    when (systemOk) {
-                        true -> tr("已读取到小米天气 ✓", "已讀取到小米天氣 ✓", "Xiaomi Weather available ✓")
-                        false -> tr("读取不到（系统可能不开放给第三方）", "讀取不到（系統可能不開放給第三方）", "Not available on this system")
-                        null -> tr("关闭", "關閉", "Off")
-                    },
-                    useSystem,
-                ) {
-                    useSystem = it
-                    prefs.useSystemWeather = it
-                    refreshNow()
-                }
-            }
         }
     }
 
@@ -992,9 +958,8 @@ private fun WeatherCard(w: WeatherData, lang: Lang, onRefresh: () -> Unit) {
         Spacer(Modifier.height(6.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             val t = Instant.ofEpochMilli(w.fetchedAt).atZone(ZoneId.systemDefault()).toLocalTime()
-            val src = w.sources.joinToString(" · ") { Weather.sourceLabel(it, lang) }
             Text(
-                tr("更新于", "更新於", "Updated", lang) + " ${t.hour.toString().padStart(2, '0')}:${t.minute.toString().padStart(2, '0')}" + (if (src.isNotEmpty()) " · $src" else ""),
+                tr("更新于", "更新於", "Updated", lang) + " ${t.hour.toString().padStart(2, '0')}:${t.minute.toString().padStart(2, '0')}",
                 color = SubText,
                 fontSize = 11.sp,
                 modifier = Modifier.weight(1f),
@@ -1073,60 +1038,6 @@ private fun CitySearchDialog(lang: Lang, onDismiss: () -> Unit, onPick: (CityRes
 }
 
 // =====================================================================
-// 名言
-// =====================================================================
-
-@Composable
-private fun QuotesPage() {
-    val ctx = LocalContext.current
-    val prefs = remember { Prefs(ctx) }
-    val scope = rememberCoroutineScope()
-    val lang = L.current
-    val quote by Quotes.state.collectAsState()
-    var enabled by remember { mutableStateOf(prefs.quoteEnabled) }
-    var source by remember { mutableIntStateOf(prefs.quoteSource) }
-    var interval by remember { mutableIntStateOf(prefs.quoteInterval) }
-    val intervals = listOf(0, 30, 60, 180, 1440)
-
-    Section(tr("名言", "名言", "Quotes")) {
-        SwitchRow(tr("锁屏显示名言", "鎖定畫面顯示名言", "Show quotes"), null, enabled) {
-            enabled = it
-            prefs.quoteEnabled = it
-            Widgets.updateAll(ctx)
-        }
-        quote?.let { Quotes.display(it, lang) }?.let { q ->
-            Spacer(Modifier.height(6.dp))
-            Text("「${q.text}」", color = Color.White, fontSize = 15.sp, lineHeight = 22.sp)
-            if (q.author.isNotBlank()) Text("—— ${q.author}", color = SubText, fontSize = 12.sp)
-            TextButton(onClick = { scope.launch { Quotes.next(ctx) } }) { Text(tr("换一句", "換一句", "Next"), color = Accent) }
-        }
-    }
-    Section(tr("来源", "來源", "Source")) {
-        ChoiceRow(listOf(tr("内置", "內建", "Built-in"), tr("一言(在线)", "一言(線上)", "Hitokoto"), tr("混合", "混合", "Mixed")), source) {
-            source = it
-            prefs.quoteSource = it
-        }
-        Spacer(Modifier.height(6.dp))
-        Paragraph(
-            tr(
-                "内置 ${Quotes.builtinCount} 句经典名言，全部轮完一遍之前不会重复；一言来自 hitokoto.cn，会记住最近 300 句避免重复。",
-                "內建 ${Quotes.builtinCount} 句經典名言，全部輪完一遍之前不會重複；一言來自 hitokoto.cn，會記住最近 300 句避免重複。",
-                "${Quotes.builtinCount} built-in quotes never repeat until all are shown; Hitokoto (hitokoto.cn) avoids the last 300.",
-            ),
-        )
-    }
-    Section(tr("更新频率", "更新頻率", "Frequency")) {
-        ChoiceRow(
-            listOf(tr("每次亮屏", "每次亮屏", "Each wake"), tr("30分钟", "30分鐘", "30 min"), tr("1小时", "1小時", "1 h"), tr("3小时", "3小時", "3 h"), tr("每天", "每天", "Daily")),
-            intervals.indexOf(interval).coerceAtLeast(0),
-        ) {
-            interval = intervals[it]
-            prefs.quoteInterval = interval
-        }
-    }
-}
-
-// =====================================================================
 // 小组件
 // =====================================================================
 
@@ -1134,35 +1045,48 @@ private fun QuotesPage() {
 private fun WidgetsPage() {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
-    var style by remember { mutableIntStateOf(prefs.widgetStyle) }
+    var style by remember { mutableIntStateOf(prefs.widgetStyle.coerceIn(0, 2)) }
 
-    Section(tr("样式", "樣式", "Style")) {
+    Section(tr("民国纪年小组件", "民國紀年小工具", "ROC Calendar widget")) {
+        Paragraph(
+            tr(
+                "一个小组件包含时间、民国日期、农历、天气和名言。点天气打开本应用的天气页，点名言换一句，点其它地方打开本应用。",
+                "一個小工具包含時間、民國日期、農曆、天氣和名言。點天氣開啟本應用程式的天氣頁，點名言換一句，點其他地方開啟本應用程式。",
+                "One widget with time, ROC date, lunar date, weather and a quote. Tap weather for the weather page, the quote for a new one, anywhere else to open the app.",
+            ),
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(tr("样式", "樣式", "Style"), color = SubText, fontSize = 13.sp)
+        Spacer(Modifier.height(6.dp))
         ChoiceRow(listOf(tr("白字", "白字", "Light"), tr("深色字", "深色字", "Dark"), tr("卡片", "卡片", "Card")), style) {
             style = it
             prefs.widgetStyle = it
             Widgets.updateAll(ctx)
         }
-    }
-    Section(tr("添加到桌面", "加入桌面", "Add to home screen")) {
-        Widgets.kinds.forEach { k ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(k.label(), color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                TextButton(onClick = {
-                    if (!Widgets.requestPin(ctx, k.cls)) {
-                        toast(ctx, tr("请长按桌面空白处 → 小组件 → 找到“民国”", "請長按桌面空白處 → 小工具 → 找到「民國」", "Long-press the home screen → Widgets"))
-                    }
-                }) { Text(tr("添加", "加入", "Add"), color = Accent) }
-            }
-        }
-        Paragraph(tr("名言小组件点一下换一句；天气小组件点开小米天气；日历方块点开日历。", "名言小工具點一下換一句；天氣小工具點開小米天氣；日曆方塊點開日曆。", "Tap the quote widget for a new quote; weather opens Xiaomi Weather; calendar opens your calendar."))
+        Spacer(Modifier.height(4.dp))
+        Paragraph(
+            tr(
+                "白字、深色字：背景透明，分别适合深色、浅色壁纸；卡片：半透明深色圆角背景，任何壁纸都看得清。",
+                "白字、深色字：背景透明，分別適合深色、淺色桌布；卡片：半透明深色圓角背景，任何桌布都看得清。",
+                "Light/Dark: transparent, for dark/light wallpapers. Card: translucent rounded background, readable anywhere.",
+            ),
+        )
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = {
+                if (!Widgets.requestPin(ctx)) {
+                    toast(ctx, tr("请长按桌面空白处 → 小组件 → 找到“民国纪年”", "請長按桌面空白處 → 小工具 → 找到「民國紀年」", "Long-press the home screen → Widgets → ROC Calendar"))
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent),
+        ) { Text(tr("添加到桌面", "加入桌面", "Add to home screen")) }
     }
 }
 
 // =====================================================================
 // 权限
 // =====================================================================
-
-private val isXiaomi: Boolean get() = Brand.isXiaomi
 
 @SuppressLint("BatteryLife")
 @Composable
@@ -1174,10 +1098,11 @@ private fun PermissionsPage(tick: Int) {
     val overlayOk = remember(t) { Settings.canDrawOverlays(ctx) }
     val notifyOk = remember(t) { NotificationManagerCompat.from(ctx).areNotificationsEnabled() }
     val batteryOk = remember(t) { ctx.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(ctx.packageName) }
-    val locationOk = remember(t) { Weather.hasLocationPermission(ctx) }
+    val locationOk = remember(t) { Weather.hasPreciseLocation(ctx) }
     val bgLocationOk = remember(t) { Weather.hasBackgroundLocation(ctx) }
     val notifyLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { localTick++ }
     val locLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { localTick++ }
+    val preciseLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { localTick++ }
 
     Section(tr("必需", "必要", "Required")) {
         PermissionRow(tr("显示在其他应用上层", "顯示在其他應用程式上層", "Display over other apps"), tr("锁屏显示必需", "鎖定畫面顯示必需", "Required for the lock screen"), overlayOk) {
@@ -1192,13 +1117,13 @@ private fun PermissionsPage(tick: Int) {
     }
     if (prefs.weatherEnabled) {
         Section(tr("天气定位", "天氣定位", "Weather location")) {
-            PermissionRow(tr("位置", "位置", "Location"), tr("自动定位天气", "自動定位天氣", "Local weather"), locationOk) {
-                locLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+            PermissionRow(tr("精确位置", "精確位置", "Precise location"), tr("GPS 准确定位天气", "GPS 準確定位天氣", "GPS for accurate weather"), locationOk) {
+                preciseLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
             }
             if (locationOk && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 PermissionRow(
                     tr("后台位置", "背景位置", "Background location"),
-                    tr("选“始终允许”：完全替代模式和后台更新都需要", "選「一律允許」：完全取代模式和背景更新都需要", "Choose \"Allow all the time\" — needed in Replace mode"),
+                    tr("可选：选“始终允许”后熄屏时也能按当前位置更新天气；不开则用最近一次的位置", "可選：選「一律允許」後熄屏時也能依目前位置更新天氣；不開則用最近一次的位置", "Optional: lets weather follow you while the screen is off; otherwise the last location is used"),
                     bgLocationOk,
                 ) { locLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION) }
             }
@@ -1241,41 +1166,19 @@ private fun PermissionsPage(tick: Int) {
 private fun AboutPage() {
     val ctx = LocalContext.current
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            Modifier
-                .size(84.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .background(Color(0xFF1B2A38)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Image(painterResource(R.drawable.ic_launcher_foreground), null, modifier = Modifier.size(84.dp))
-        }
+        // 名称和图标跟随“长按图标 → 更换图标 / 修改应用名称”的设置
+        val icon = remember { IconSwitcher.displayIcon(ctx).asImageBitmap() }
+        Image(icon, null, modifier = Modifier.size(84.dp).clip(RoundedCornerShape(22.dp)))
         Spacer(Modifier.height(10.dp))
-        Text(tr("民国时钟", "民國時鐘", "Minguo Clock"), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Text(IconSwitcher.displayName(ctx), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Text("v" + Maintenance.versionName(ctx), color = SubText, fontSize = 13.sp)
-    }
-    Section(tr("本机", "本機", "This device")) {
-        val region by produceState(Region.describe(), Unit) { Region.isMainland(ctx); value = Region.describe() }
-        Paragraph(Brand.name() + "\n" + tr("网络线路：", "網路線路：", "Network: ") + region)
     }
     Section(tr("作者", "作者", "Author")) {
         Text(AppConfig.AUTHOR, color = Color.White, fontSize = 15.sp)
         TextButton(onClick = { Maintenance.openUrl(ctx, AppConfig.BLOG) }) { Text(AppConfig.BLOG, color = Accent) }
     }
-    Section(tr("数据来源", "資料來源", "Data")) {
-        Paragraph(
-            tr(
-                "天气：小米天气、腾讯天气、Open-Meteo（地名反查：BigDataCloud）\n城市搜索：Open-Meteo Geocoding\n壁纸：必应每日图片（按 IP 自动选国内 / 国际节点）\n名言：内置经典名言、一言 hitokoto.cn（按 IP 自动选国内 / 海外线路）\n农历：Android 系统 ICU 历法",
-                "天氣：小米天氣、騰訊天氣、Open-Meteo（地名反查：BigDataCloud）\n城市搜尋：Open-Meteo Geocoding\n桌布：Bing 每日圖片（依 IP 自動選國內 / 國際節點）\n名言：內建經典名言、一言 hitokoto.cn（依 IP 自動選國內 / 海外線路）\n農曆：Android 系統 ICU 曆法",
-                "Weather: Xiaomi Weather, Tencent Weather, Open-Meteo (places: BigDataCloud)\nCity search: Open-Meteo Geocoding\nWallpaper: Bing (China / global endpoint by IP)\nQuotes: built-in, hitokoto.cn (China / overseas line by IP)\nLunar calendar: Android ICU",
-            ),
-        )
-    }
     Section(tr("版权", "版權", "Copyright")) {
         Paragraph("© 2026 ${AppConfig.AUTHOR}. All rights reserved.")
-        Row {
-            TextButton(onClick = { Maintenance.feedback(ctx) }) { Text(tr("反馈", "意見回饋", "Feedback"), color = Accent) }
-        }
     }
 }
 

@@ -20,13 +20,19 @@ data class FontEntry(val id: String, val hans: String, val hant: String, val en:
 object Fonts {
     const val DEFAULT = "default"
     private const val FILE_PREFIX = "file:"
+    private const val ASSET_PREFIX = "asset:"
 
     private val builtins = listOf(
         FontEntry(DEFAULT, "默认", "預設", "Default"),
         FontEntry("sans", "黑体", "黑體", "Sans"),
         FontEntry("serif", "宋体", "宋體", "Serif"),
         FontEntry("mono", "等宽", "等寬", "Mono"),
-        FontEntry("cursive", "手写(英文)", "手寫(英文)", "Cursive"),
+        // 内置字体（assets/fonts，授权见 assets/fonts/licenses）
+        FontEntry(ASSET_PREFIX + "minguo_kai.ttf", "文楷（楷书·简繁）", "文楷（楷書·簡繁）", "Kai (CJK)"),
+        FontEntry(ASSET_PREFIX + "minguo_round.ttf", "圆体（繁体为主）", "圓體（繁體為主）", "Round (Trad.)"),
+        FontEntry(ASSET_PREFIX + "iansui.ttf", "芫荽（手写·繁体为主）", "芫荽（手寫·繁體為主）", "Iansui (Trad.)"),
+        FontEntry(ASSET_PREFIX + "orbitron.ttf", "Orbitron（数字）", "Orbitron（數字）", "Orbitron (digits)"),
+        FontEntry(ASSET_PREFIX + "share_tech_mono.ttf", "Share Tech Mono（数字）", "Share Tech Mono（數字）", "Share Tech Mono"),
     )
 
     /** 导入/删除字体后 +1 */
@@ -48,7 +54,12 @@ object Fonts {
         "mono" -> FontFamily.Monospace
         "cursive" -> FontFamily.Cursive
         DEFAULT -> FontFamily.Default
-        else -> if (id.startsWith(FILE_PREFIX)) {
+        else -> if (id.startsWith(ASSET_PREFIX)) {
+            cache.getOrPut(id) {
+                runCatching { FontFamily(Typeface.createFromAsset(context.assets, "fonts/" + id.removePrefix(ASSET_PREFIX))) }
+                    .getOrDefault(FontFamily.Default)
+            }
+        } else if (id.startsWith(FILE_PREFIX)) {
             cache.getOrPut(id) {
                 val f = File(dir(context), id.removePrefix(FILE_PREFIX))
                 runCatching { FontFamily(Typeface.createFromFile(f)) }.getOrDefault(FontFamily.Default)
