@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">民国时钟</string>
+    <string name="widget_name">民国时钟</string>
+    <string name="widget_desc">民国纪年日期 + 农历 + 时分秒</string>
+</resources>

@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:baselineAligned="true"
+        android:orientation="horizontal">
+
+        <TextClock
+            android:id="@+id/widget_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-light"
+            android:fontFeatureSettings="tnum"
+            android:format12Hour="h:mm"
+            android:format24Hour="HH:mm"
+            android:includeFontPadding="false"
+            android:shadowColor="#55000000"
+            android:shadowDy="2"
+            android:shadowRadius="6"
+            android:textColor="#FFFFFFFF"
+            android:textSize="58sp" />
+
+        <TextClock
+            android:id="@+id/widget_seconds"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:fontFamily="sans-serif-light"
+            android:fontFeatureSettings="tnum"
+            android:format12Hour="ss"
+            android:format24Hour="ss"
+            android:includeFontPadding="false"
+            android:shadowColor="#55000000"
+            android:shadowDy="2"
+            android:shadowRadius="6"
+            android:textColor="#DDFFFFFF"
+            android:textSize="22sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_date"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:letterSpacing="0.08"
+        android:shadowColor="#55000000"
+        android:shadowDy="1"
+        android:shadowRadius="4"
+        android:text="民國115年11月2日  星期一"
+        android:textColor="#FFFFFFFF"
+        android:textSize="16sp" />
+
+    <TextView
+        android:id="@+id/widget_lunar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:letterSpacing="0.06"
+        android:shadowColor="#55000000"
+        android:shadowDy="1"
+        android:shadowRadius="4"
+        android:text="農曆丙午馬年 九月廿四"
+        android:textColor="#DDFFFFFF"
+        android:textSize="13sp" />
+</LinearLayout>
