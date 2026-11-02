@@ -6,6 +6,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
@@ -68,6 +71,13 @@ object IconSwitcher {
         for (ic in styles.indices) for (n in names.indices) if (ic != icon || n != name) {
             pm.setComponentEnabledSetting(alias(context, ic, n), PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
         }
+        // 旧入口被停用时，系统会把挂在它上面的长按菜单一起删掉，所以要马上挂到新入口上重新发布；
+        // 桌面处理组件变化需要一点时间，1.5 秒和 5 秒后各再发布一次，确保长按能出来
+        val app = context.applicationContext
+        publishShortcuts(app, force = true)
+        val h = Handler(Looper.getMainLooper())
+        h.postDelayed({ publishShortcuts(app, force = true) }, 1_500)
+        h.postDelayed({ publishShortcuts(app, force = true) }, 5_000)
     }
 
     // ------------------------------------------------------------------ 名称
@@ -92,26 +102,49 @@ object IconSwitcher {
 
     // ------------------------------------------------------------------ 长按菜单
 
-    /** 长按桌面图标弹出的菜单：更换图标、修改应用名称。语言切换后重新发布即可更新文字。 */
-    fun publishShortcuts(context: Context) = runCatching {
-        val lang = L.refresh(context)
-        fun item(id: String, label: String, icon: Int, mode: String) =
-            ShortcutInfoCompat.Builder(context, id)
-                .setShortLabel(label)
-                .setIcon(IconCompat.createWithResource(context, icon))
-                .setIntent(
-                    Intent(context, IconPickerActivity::class.java)
-                        .setAction(Intent.ACTION_VIEW)
-                        .putExtra(IconPickerActivity.EXTRA_MODE, mode),
-                )
-                .build()
+    /**
+     * 长按桌面图标弹出的菜单：更换图标、修改应用名称。
+     *
+     * 菜单必须挂在“当前启用的那个入口”上（setActivity）：不指定时系统默认挂到 manifest 里第一个入口，
+     * 换过图标/名称后那个入口是停用的，发布会失败，长按就什么都没有。
+     * 入口、语言没变且菜单还在时跳过，避免触发系统对后台发布次数的限制。
+     */
+    fun publishShortcuts(context: Context, force: Boolean = false) {
+        try {
+            val lang = L.refresh(context)
+            val (icon, name) = currentAlias(context)
+            val target = alias(context, icon, name)
+            val sig = "${target.className}|$lang"
+            val p = Prefs(context)
+            val present = ShortcutManagerCompat.getDynamicShortcuts(context).size >= 2
+            if (!force && present && p.shortcutsSig == sig) return
 
-        ShortcutManagerCompat.setDynamicShortcuts(
-            context,
-            listOf(
-                item("change_icon", tr("更换图标", "更換圖示", "Change icon", lang), R.drawable.icon_preview_0, IconPickerActivity.MODE_ICON),
-                item("change_name", tr("修改应用名称", "修改應用程式名稱", "Rename app", lang), R.drawable.icon_preview_5, IconPickerActivity.MODE_NAME),
-            ),
-        )
+            fun item(id: String, label: String, iconRes: Int, mode: String) =
+                ShortcutInfoCompat.Builder(context, id)
+                    .setShortLabel(label)
+                    .setLongLabel(label)
+                    .setIcon(IconCompat.createWithResource(context, iconRes))
+                    .setActivity(target)
+                    .setIntent(
+                        Intent(context, IconPickerActivity::class.java)
+                            .setAction(Intent.ACTION_VIEW)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                            .putExtra(IconPickerActivity.EXTRA_MODE, mode),
+                    )
+                    .build()
+
+            // 先清掉挂在旧入口上的，再挂到当前入口
+            ShortcutManagerCompat.removeAllDynamicShortcuts(context)
+            val ok = ShortcutManagerCompat.setDynamicShortcuts(
+                context,
+                listOf(
+                    item("change_icon", tr("更换图标", "更換圖示", "Change icon", lang), R.drawable.icon_preview_0, IconPickerActivity.MODE_ICON),
+                    item("change_name", tr("修改应用名称", "修改應用程式名稱", "Rename app", lang), R.drawable.icon_preview_5, IconPickerActivity.MODE_NAME),
+                ),
+            )
+            if (ok) p.shortcutsSig = sig
+        } catch (e: Exception) {
+            Log.w("IconSwitcher", "发布长按菜单失败", e)
+        }
     }
 }

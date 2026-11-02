@@ -32,7 +32,6 @@ class MinguoApp : Application() {
             if (previous != null) previous.uncaughtException(t, e) else exitProcess(2)
         }
         Watchdog.schedule(this)
-        IconSwitcher.publishShortcuts(this)
     }
 
     companion object {

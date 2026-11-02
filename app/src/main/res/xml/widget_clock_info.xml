@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 可拖动调整宽高：宽度受桌面网格限制（不会超过屏幕），高度最小 100dp、最大 360dp（Android 12+ 生效） -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/widget_desc"
     android:initialLayout="@layout/widget_clock"
     android:minWidth="250dp"
     android:minHeight="180dp"
+    android:minResizeWidth="160dp"
+    android:minResizeHeight="100dp"
+    android:maxResizeHeight="360dp"
     android:previewLayout="@layout/widget_clock"
     android:resizeMode="horizontal|vertical"
     android:targetCellWidth="4"

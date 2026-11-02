@@ -18,6 +18,8 @@ class Prefs(context: Context) {
 
     fun clearAll() = sp.edit().clear().commit()
 
+    /** 已发布的长按菜单对应的“入口|语言”，没变就不重复发布 */
+    var shortcutsSig: String get() = str("shortcuts_sig") ?: ""; set(v) = putStr("shortcuts_sig", v)
     /** 已经请求过的运行时权限（用于判断“不再询问”） */
     var askedPermissions: String get() = str("asked_permissions") ?: ""; set(v) = putStr("asked_permissions", v)
 
@@ -67,7 +69,8 @@ class Prefs(context: Context) {
     var layoutJson: String? get() = str("layout_json"); set(v) = putStr("layout_json", v)
 
     /** 0 = 透明白字，1 = 透明深色字，2 = 半透明卡片 */
-    var widgetStyle: Int get() = int("widget_style", 0); set(v) = putInt("widget_style", v)
+    // 换新键：旧版本存过“卡片”的用户统一回到默认的透明白字
+    var widgetStyle: Int get() = int("widget_style_v2", 0); set(v) = putInt("widget_style_v2", v)
 
     // ---- 名言 ----
     var quoteEnabled: Boolean get() = bool("quote_enabled", true); set(v) = putBool("quote_enabled", v)

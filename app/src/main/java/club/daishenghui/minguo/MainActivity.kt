@@ -566,7 +566,6 @@ private fun LockModePage(tick: Int) {
                     }) { Text(tr("清除密码", "清除密碼", "Remove PIN"), color = Danger) }
                 }
             }
-            Paragraph(tr("设置密码后，锁屏右下角的相机入口会隐藏（防止借相机进入相册）。", "設定密碼後，鎖定畫面右下角的相機入口會隱藏（防止藉相機進入相簿）。", "With a PIN set, the camera shortcut is hidden."))
         }
     }
 
@@ -860,7 +859,7 @@ private fun WeatherPage() {
         if (Weather.hasLocationPermission(ctx)) locateNow() else toast(ctx, tr("没有位置权限，可以改用“搜索城市”", "沒有位置權限，可以改用「搜尋城市」", "No location permission — search a city instead"))
     }
     fun locateWithPermission() {
-        if (Weather.hasPreciseLocation(ctx)) locateNow() else permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        if (Weather.hasLocationPermission(ctx)) locateNow() else permLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
     }
 
     Section(tr("天气", "天氣", "Weather")) {

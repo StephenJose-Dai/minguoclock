@@ -228,9 +228,8 @@ fun LockContent(
 
     val is24 = DateFormat.is24HourFormat(ctx)
     val alarm = remember(now.minute, lang) {
-        ctx.getSystemService(AlarmManager::class.java).nextAlarmClock?.triggerTime?.let {
-            RocCalendar.alarmText(it, now, is24, lang)
-        }
+        // 只显示时钟应用设的闹钟；没设闹钟时为 null，锁屏上就不显示
+        Alarms.next(ctx)?.let { RocCalendar.alarmText(it, now, is24, lang) }
     }
 
     val swipe = if (interactive && !showPin) {
@@ -400,11 +399,18 @@ fun LockContent(
                                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                                     Icon(painterResource(w.cond.icon(w.isDay)), null, tint = text, modifier = Modifier.size((sizeSp * 1.35f).dp))
                                                     Spacer(Modifier.width((sizeSp * 0.45f).dp))
-                                                    val range = w.today?.let { "  " + Weather.temp(it.min) + " / " + Weather.temp(it.max) } ?: ""
-                                                    val aqi = w.aqi?.let { "  " + tr("空气", "空氣", "AQI", lang) + " " + Weather.aqiLabel(it, lang) } ?: ""
+                                                    // 每一段内部用不换行空格连起来，避免“漳州市 芗城区”这类词被拆开
+                                                    val nb = '\u00A0'
+                                                    val range = w.today?.let { "  " + Weather.temp(it.min) + "$nb/$nb" + Weather.temp(it.max) } ?: ""
+                                                    val aqi = w.aqi?.let { "  " + tr("空气", "空氣", "AQI", lang) + nb + Weather.aqiLabel(it, lang) } ?: ""
+                                                    val main = w.cond.label(lang) + nb + Weather.temp(w.temp) + range + aqi
+                                                    val city = Weather.cityLabel(w, lang).replace(' ', nb)
+                                                    // 一行放得下就“… · 城市”，放不下就把城市整体放到第二行
+                                                    var twoLines by remember(main, city, sizeSp) { mutableStateOf(false) }
                                                     Text(
-                                                        w.cond.label(lang) + " " + Weather.temp(w.temp) + range + aqi + "  ·  " + Weather.cityLabel(w, lang),
+                                                        if (twoLines) main + "\n" + city else "$main  ·  $city",
                                                         color = text, fontSize = sizeSp.sp, fontFamily = family, fontWeight = weight,
+                                                        onTextLayout = { r -> if (!twoLines && r.lineCount > 1) twoLines = true },
                                                     )
                                                 }
                                             }
@@ -556,18 +562,7 @@ private fun BottomBar(
         }
         UnlockHint(hint, look.text, look.sub)
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-            if (showCamera) {
-                Box(
-                    Modifier
-                        .size(46.dp)
-                        .clip(CircleShape)
-                        .background(chip)
-                        .clickable(onClick = onCamera),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(painterResource(R.drawable.ic_camera), contentDescription = tr("相机", "相機", "Camera", lang), tint = look.text, modifier = Modifier.size(22.dp))
-                }
-            }
+            // 右下角不显示相机入口（按需求去掉）
         }
     }
 }

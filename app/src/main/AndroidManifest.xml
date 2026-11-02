@@ -25,6 +25,9 @@
             <action android:name="android.intent.action.SHOW_ALARMS" />
         </intent>
         <intent>
+            <action android:name="android.intent.action.SET_ALARM" />
+        </intent>
+        <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.APP_CALENDAR" />
         </intent>

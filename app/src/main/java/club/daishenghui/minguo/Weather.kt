@@ -667,7 +667,8 @@ object Weather {
 
     fun temp(t: Double): String = if (t.isNaN()) "--°" else "${t.roundToInt()}°"
 
-    fun cityLabel(w: WeatherData, lang: Lang) = w.city.ifBlank { tr("当前位置", "目前位置", "Current location", lang) }
+    /** 城市名，内部空格换成不换行空格，避免“漳州市 芗城区”被拆到两行 */
+    fun cityLabel(w: WeatherData, lang: Lang) = w.city.ifBlank { tr("当前位置", "目前位置", "Current location", lang) }.replace(' ', '\u00A0')
 
     /** 一行摘要：多云 18°  15°/22° */
     fun summary(w: WeatherData, lang: Lang): String {

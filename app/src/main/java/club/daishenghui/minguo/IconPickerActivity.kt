@@ -49,6 +49,12 @@ class IconPickerActivity : ComponentActivity() {
         setContent { IconPicker(mode, onDone = { finish() }) }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 从长按菜单进来时也补发一次（在前台，不受系统发布次数限制）
+        IconSwitcher.publishShortcuts(this)
+    }
+
     companion object {
         const val EXTRA_MODE = "mode"
         const val MODE_ICON = "icon"

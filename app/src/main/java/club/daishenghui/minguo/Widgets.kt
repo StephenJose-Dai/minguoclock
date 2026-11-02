@@ -8,6 +8,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Bundle
+import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
 import kotlinx.coroutines.CoroutineScope
@@ -35,6 +37,11 @@ class ClockWidget : AppWidgetProvider() {
     }
 
     override fun onEnabled(context: Context) = Widgets.scheduleMidnight(context)
+
+    /** 用户拖动调整了小组件大小：按新尺寸重新排版 */
+    override fun onAppWidgetOptionsChanged(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int, newOptions: Bundle) {
+        Widgets.updateAll(context)
+    }
 
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
@@ -68,7 +75,10 @@ object Widgets {
         val mgr = AppWidgetManager.getInstance(context)
         val ids = mgr.getAppWidgetIds(ComponentName(context, ClockWidget::class.java))
         if (ids.isNotEmpty()) {
-            runCatching { build(context) }.getOrNull()?.let { views -> ids.forEach { mgr.updateAppWidget(it, views) } }
+            // 每个小组件按自己的尺寸排版（字号跟着宽高缩放）
+            ids.forEach { id ->
+                runCatching { build(context, mgr.getAppWidgetOptions(id)) }.getOrNull()?.let { mgr.updateAppWidget(id, it) }
+            }
         }
         scheduleMidnight(context)
     }
@@ -80,7 +90,18 @@ object Widgets {
         return mgr.requestPinAppWidget(ComponentName(context, ClockWidget::class.java), null, null)
     }
 
-    private fun build(context: Context): RemoteViews {
+    /**
+     * 按小组件当前尺寸算字号缩放比例。默认 4×3（约 250×180dp）为 1.0，
+     * 宽度由桌面网格限制、不会超过屏幕；高度在 widget_clock_info.xml 里限制了上限。
+     */
+    private fun scaleFor(options: Bundle?): Float {
+        val w = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH) ?: 0
+        val h = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT) ?: 0
+        if (w <= 0 || h <= 0) return 1f
+        return minOf(w / 250f, h / 180f).coerceIn(0.55f, 1.6f)
+    }
+
+    private fun build(context: Context, options: Bundle?): RemoteViews {
         val p = Prefs(context)
         val style = p.style()
         val lang = style.lang
@@ -91,6 +112,14 @@ object Widgets {
         val today = LocalDate.now()
         val rv = RemoteViews(context.packageName, R.layout.widget_clock)
         rv.setInt(R.id.widget_root, "setBackgroundResource", if (p.widgetStyle == 2) R.drawable.widget_card_bg else 0)
+        val k = scaleFor(options)
+        fun size(id: Int, sp: Float) = rv.setTextViewTextSize(id, TypedValue.COMPLEX_UNIT_SP, sp * k)
+        size(R.id.widget_time, 56f)
+        size(R.id.widget_seconds, 22f)
+        size(R.id.widget_date, 16f)
+        size(R.id.widget_lunar, 13f)
+        size(R.id.widget_weather, 13f)
+        size(R.id.widget_quote, 14f)
 
         rv.setTextViewText(R.id.widget_date, RocCalendar.dateLine(today, style) + "  " + RocCalendar.weekday(today, lang))
         rv.setTextViewText(R.id.widget_lunar, RocCalendar.lunarLine(System.currentTimeMillis(), style))

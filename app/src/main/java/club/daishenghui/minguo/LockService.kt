@@ -151,7 +151,7 @@ class LockService : Service() {
             overlay = it
         }
         o.show()
-        pendingAlarm = getSystemService(AlarmManager::class.java).nextAlarmClock?.triggerTime ?: 0L
+        pendingAlarm = Alarms.next(this) ?: 0L
     }
 
     private fun startLockActivity() {

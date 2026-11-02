@@ -59,8 +59,10 @@ import kotlinx.coroutines.delay
  */
 object Perms {
     /**
-     * 必需权限。位置要「精确位置」（GPS 定位需要），「仅在使用中允许」即可；
-     * 锁屏服务以定位类型运行，锁屏、熄屏时也能定位。「始终允许」是可选项。
+     * 必需权限。位置只要授权了（「仅在使用中允许」即可，精确或大致都算）就通过，不会退出；
+     * 锁屏服务以定位类型运行，锁屏、熄屏时也能定位。
+     * 精确位置（GPS）是加分项：只给了大致位置时，每次启动会额外提示一次开启精确位置，拒绝也不退出。
+     * 「始终允许」是可选项。
      */
     enum class P { NOTIFY, LOCATION, OVERLAY, BATTERY }
 
@@ -73,7 +75,8 @@ object Perms {
         } else {
             NotificationManagerCompat.from(c).areNotificationsEnabled()
         }
-        P.LOCATION -> granted(c, Manifest.permission.ACCESS_FINE_LOCATION) // 精确位置，GPS 需要
+        // 精确或大致都算已授权（HyperOS 的弹窗里如果关了「精确位置」，系统只给大致位置）
+        P.LOCATION -> granted(c, Manifest.permission.ACCESS_FINE_LOCATION) || granted(c, Manifest.permission.ACCESS_COARSE_LOCATION)
         P.OVERLAY -> Settings.canDrawOverlays(c)
         P.BATTERY -> c.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(c.packageName)
     }
@@ -96,14 +99,14 @@ object Perms {
 
     fun title(p: P) = when (p) {
         P.NOTIFY -> tr("通知", "通知", "Notifications")
-        P.LOCATION -> tr("精确位置", "精確位置", "Precise location")
+        P.LOCATION -> tr("位置", "位置", "Location")
         P.OVERLAY -> tr("显示在其他应用上层（悬浮窗）", "顯示在其他應用程式上層", "Display over other apps")
         P.BATTERY -> tr("忽略电池优化", "忽略電池最佳化", "Ignore battery optimization")
     }
 
     fun reason(p: P) = when (p) {
         P.NOTIFY -> tr("通知栏显示民国日期、农历和天气，并让锁屏服务常驻。", "通知欄顯示民國日期、農曆和天氣，並讓鎖定畫面服務常駐。", "Shows the ROC date and weather in notifications and keeps the lock screen running.")
-        P.LOCATION -> tr("用 GPS 准确定位，显示当地天气。请选「精确」位置，「仅在使用中允许」即可；选「大致」位置算未授权。", "用 GPS 準確定位，顯示當地天氣。請選「精確」位置，「僅在使用期間允許」即可；選「大概」位置算未授權。", "Uses GPS for accurate local weather. Choose \"Precise\"; \"While using the app\" is enough. \"Approximate\" counts as denied.")
+        P.LOCATION -> tr("定位当地天气。「仅在使用中允许」即可；建议打开「精确位置」，才能用 GPS 准确定位。", "定位當地天氣。「僅在使用期間允許」即可；建議開啟「精確位置」，才能用 GPS 準確定位。", "Finds local weather. \"While using the app\" is enough; turn on \"Precise\" so GPS can be used.")
         P.OVERLAY -> tr("民国锁屏要显示在系统锁屏上层。", "民國鎖定畫面要顯示在系統鎖定畫面上層。", "The ROC lock screen draws over the system lock screen.")
         P.BATTERY -> tr("防止锁屏服务被系统在后台杀掉。", "防止鎖定畫面服務被系統在背景關閉。", "Keeps the lock screen service from being killed.")
     }
@@ -127,6 +130,10 @@ object Perms {
             else -> listOf(details)
         }
     }
+
+    /** 本次启动是否已经提示过开启精确位置（进程级，下次启动再提示） */
+    @Volatile
+    var preciseAskedThisLaunch = false
 
     fun markAsked(c: Context, perm: String) {
         val p = Prefs(c)
@@ -191,8 +198,17 @@ fun PermissionGate(content: @Composable () -> Unit) {
         if (p != null && !Perms.has(ctx, p)) exit() else missing = Perms.missing(ctx)
     }
 
+    // 只给了大致位置：每次启动提示一次升级为精确位置（GPS），拒绝也不退出
+    val precise = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ -> }
+
     val todo = missing.filter { it !in skipped }
     if (todo.isEmpty()) {
+        LaunchedEffect(Unit) {
+            if (!Perms.preciseAskedThisLaunch && !Weather.hasPreciseLocation(ctx)) {
+                Perms.preciseAskedThisLaunch = true
+                precise.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+            }
+        }
         content()
         return
     }
