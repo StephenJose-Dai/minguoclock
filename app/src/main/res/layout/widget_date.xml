@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="10dp">
+
+    <TextView
+        android:id="@+id/widget_ym"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:shadowColor="#55000000"
+        android:shadowDy="1"
+        android:shadowRadius="4"
+        android:text="民國115年11月"
+        android:textColor="#DDFFFFFF"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/widget_day"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:fontFamily="sans-serif-light"
+        android:includeFontPadding="false"
+        android:shadowColor="#55000000"
+        android:shadowDy="2"
+        android:shadowRadius="6"
+        android:text="2"
+        android:textColor="#FFFFFFFF"
+        android:textSize="58sp" />
+
+    <TextView
+        android:id="@+id/widget_week"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:shadowColor="#55000000"
+        android:shadowDy="1"
+        android:shadowRadius="4"
+        android:text="星期一"
+        android:textColor="#FFFFFFFF"
+        android:textSize="15sp" />
+
+    <TextView
+        android:id="@+id/widget_lunar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:shadowColor="#55000000"
+        android:shadowDy="1"
+        android:shadowRadius="4"
+        android:text="九月廿四"
+        android:textColor="#DDFFFFFF"
+        android:textSize="12sp" />
+</LinearLayout>

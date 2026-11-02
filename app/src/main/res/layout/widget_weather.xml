@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="16dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="8dp">
+
+    <ImageView
+        android:id="@+id/widget_weather_icon"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:importantForAccessibility="no"
+        android:src="@drawable/weather_partly" />
+
+    <TextView
+        android:id="@+id/widget_temp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:fontFamily="sans-serif-light"
+        android:includeFontPadding="false"
+        android:shadowColor="#55000000"
+        android:shadowDy="2"
+        android:shadowRadius="6"
+        android:text="18°"
+        android:textColor="#FFFFFFFF"
+        android:textSize="34sp" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/widget_cond"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:shadowColor="#55000000"
+            android:shadowDy="1"
+            android:shadowRadius="4"
+            android:text="多雲  15°/22°"
+            android:textColor="#FFFFFFFF"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/widget_city"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:shadowColor="#55000000"
+            android:shadowDy="1"
+            android:shadowRadius="4"
+            android:text="福州"
+            android:textColor="#DDFFFFFF"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/widget_tip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:shadowColor="#55000000"
+            android:shadowDy="1"
+            android:shadowRadius="4"
+            android:text="微涼，帶件外套"
+            android:textColor="#DDFFFFFF"
+            android:textSize="12sp" />
+    </LinearLayout>
+</LinearLayout>

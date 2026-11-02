@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Minguo Clock</string>
+    <string name="widget_name">Minguo Clock</string>
+    <string name="widget_desc">Time, ROC date, lunar date and weather</string>
+    <string name="widget_date_name">Minguo Calendar</string>
+    <string name="widget_date_desc">ROC year/month, day, weekday and lunar date</string>
+    <string name="widget_weather_name">Minguo Weather</string>
+    <string name="widget_weather_desc">Current weather, range and tips</string>
+    <string name="widget_quote_name">Daily Quote</string>
+    <string name="widget_quote_desc">A quote — tap for another</string>
+</resources>

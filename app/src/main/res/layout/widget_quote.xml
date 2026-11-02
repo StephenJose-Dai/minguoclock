@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="8dp">
+
+    <TextView
+        android:id="@+id/widget_quote"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:lineSpacingMultiplier="1.15"
+        android:maxLines="3"
+        android:shadowColor="#55000000"
+        android:shadowDy="1"
+        android:shadowRadius="4"
+        android:text="「願你出走半生，歸來仍是少年。」"
+        android:textColor="#FFFFFFFF"
+        android:textSize="15sp" />
+
+    <TextView
+        android:id="@+id/widget_author"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:gravity="end"
+        android:maxLines="1"
+        android:shadowColor="#55000000"
+        android:shadowDy="1"
+        android:shadowRadius="4"
+        android:text="—— 網路流行語"
+        android:textColor="#DDFFFFFF"
+        android:textSize="12sp" />
+</LinearLayout>

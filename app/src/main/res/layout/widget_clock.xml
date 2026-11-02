@@ -70,4 +70,33 @@
         android:text="農曆丙午馬年 九月廿四"
         android:textColor="#DDFFFFFF"
         android:textSize="13sp" />
+
+    <LinearLayout
+        android:id="@+id/widget_weather_row"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/widget_weather_icon"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_marginEnd="5dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/weather_partly" />
+
+        <TextView
+            android:id="@+id/widget_weather"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:shadowColor="#55000000"
+            android:shadowDy="1"
+            android:shadowRadius="4"
+            android:text="多雲 18°  15°/22°"
+            android:textColor="#DDFFFFFF"
+            android:textSize="13sp" />
+    </LinearLayout>
 </LinearLayout>

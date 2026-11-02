@@ -1,6 +1,5 @@
 package club.daishenghui.minguo
 
-import android.app.AlarmManager
 import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -8,81 +7,54 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
-import android.text.format.DateFormat
+import android.provider.MediaStore
+import android.telecom.TelecomManager
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.addCallback
 import androidx.activity.compose.setContent
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
 /**
- * 民国锁屏界面。屏幕熄灭时由 [LockService] 拉起，盖在系统锁屏之上；
- * 上滑后调用系统的解锁流程（有密码/指纹时会弹出验证）。
+ * 锁屏 Activity，三种用途：
+ * - 保留系统密码模式：熄屏时由 [LockService] 拉起，盖在系统锁屏上；
+ * - 预览（EXTRA_PREVIEW）；
+ * - 编辑布局（EXTRA_EDIT）。
  */
 class LockActivity : ComponentActivity() {
 
-    private var preview = false
+    private val uiState = mutableStateOf(LockUi.ACTIVITY)
+    private var ui: LockUi
+        get() = uiState.value
+        set(v) {
+            uiState.value = v
+        }
     private var wasLockedWhenShown = false
     private val resetSignal = mutableIntStateOf(0)
 
     /** 用户用指纹/人脸直接解锁了系统锁屏，就一起退出 */
     private val userPresentReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (!preview && wasLockedWhenShown) finishQuietly()
+            if (ui == LockUi.ACTIVITY && wasLockedWhenShown) finishQuietly()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
-        preview = intent.getBooleanExtra(EXTRA_PREVIEW, false)
+        ui = uiFrom(intent)
+        L.refresh(this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
@@ -90,24 +62,36 @@ class LockActivity : ComponentActivity() {
             @Suppress("DEPRECATION")
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
         }
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            hide(WindowInsetsCompat.Type.systemBars())
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                } else {
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
         }
-        // 锁屏状态下屏蔽返回键；预览模式允许返回
-        onBackPressedDispatcher.addCallback(this) { if (preview) finishQuietly() }
+        // 锁屏状态下屏蔽返回键；预览/编辑允许返回
+        onBackPressedDispatcher.addCallback(this) { if (ui != LockUi.ACTIVITY) finishQuietly() }
 
         ContextCompat.registerReceiver(
             this, userPresentReceiver, IntentFilter(Intent.ACTION_USER_PRESENT), ContextCompat.RECEIVER_NOT_EXPORTED,
         )
 
         setContent {
-            LockScreen(
-                prefs = remember { Prefs(this) },
-                preview = preview,
+            LockContent(
+                ui = uiState.value,
                 resetKey = resetSignal.intValue,
                 onUnlock = { unlock() },
+                onEmergency = { LockActions.emergencyCall(this) },
+                onCamera = { LockActions.openCamera(this, secure = ui == LockUi.ACTIVITY) },
+                onStatusIcons = { dark ->
+                    WindowCompat.getInsetsController(window, window.decorView).apply {
+                        isAppearanceLightStatusBars = dark
+                        isAppearanceLightNavigationBars = dark
+                    }
+                },
+                onExitEdit = { finishQuietly() },
             )
         }
     }
@@ -115,13 +99,21 @@ class LockActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        preview = intent.getBooleanExtra(EXTRA_PREVIEW, false)
+        // 编辑/预览中被熄屏重新拉起时，保持当前界面
+        if (ui == LockUi.ACTIVITY) ui = uiFrom(intent)
         resetSignal.intValue++
     }
 
     override fun onResume() {
         super.onResume()
         wasLockedWhenShown = getSystemService(KeyguardManager::class.java).isKeyguardLocked
+        L.refresh(this)
+        // 锁屏可见 = App 在前台：可以定位、刷新天气、换名言
+        lifecycleScope.launch { Weather.refreshIfStale(this@LockActivity, inForeground = true) }
+        lifecycleScope.launch { Quotes.maybeRotate(this@LockActivity, screenOn = false) }
+        if (Prefs(this).wallpaperMode == Wallpaper.MODE_BING) {
+            lifecycleScope.launch { Wallpaper.refreshBing(this@LockActivity) }
+        }
     }
 
     override fun onDestroy() {
@@ -131,14 +123,21 @@ class LockActivity : ComponentActivity() {
 
     private fun unlock() {
         val km = getSystemService(KeyguardManager::class.java)
-        if (!preview && km.isKeyguardLocked) {
-            km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
-                override fun onDismissSucceeded() = finishQuietly()
-                override fun onDismissError() = finishQuietly()
-                override fun onDismissCancelled() {
-                    resetSignal.intValue++
-                }
-            })
+        if (ui == LockUi.ACTIVITY && km.isKeyguardLocked) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+                    override fun onDismissSucceeded() = finishQuietly()
+                    override fun onDismissError() = finishQuietly()
+                    override fun onDismissCancelled() {
+                        resetSignal.intValue++
+                    }
+                })
+            } else {
+                // Android 7.x：用旧的窗口标记请求解锁；有密码时系统弹出验证，解锁后由 USER_PRESENT 关闭本界面
+                @Suppress("DEPRECATION")
+                window.addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD)
+                if (!km.isKeyguardSecure) finishQuietly()
+            }
         } else {
             finishQuietly()
         }
@@ -153,116 +152,53 @@ class LockActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_PREVIEW = "preview"
-    }
-}
+        const val EXTRA_EDIT = "edit"
 
-@Composable
-private fun LockScreen(prefs: Prefs, preview: Boolean, resetKey: Int, onUnlock: () -> Unit) {
-    val theme = ClockThemes[prefs.themeIndex]
-    val style = prefs.style()
-    val now by rememberNow()
-    val battery by rememberBattery()
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val currentOnUnlock by rememberUpdatedState(onUnlock)
-
-    val offset = remember { Animatable(0f) }
-    var heightPx by remember { mutableFloatStateOf(1f) }
-    LaunchedEffect(resetKey) { offset.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy)) }
-
-    val alarm = remember(now.minute) {
-        ctx.getSystemService(AlarmManager::class.java).nextAlarmClock?.triggerTime?.let {
-            RocCalendar.alarmText(it, now, DateFormat.is24HourFormat(ctx), style)
+        private fun uiFrom(i: Intent?) = when {
+            i?.getBooleanExtra(EXTRA_EDIT, false) == true -> LockUi.EDIT
+            i?.getBooleanExtra(EXTRA_PREVIEW, false) == true -> LockUi.PREVIEW
+            else -> LockUi.ACTIVITY
         }
-    }
 
-    GradientBackground(
-        theme,
-        Modifier
-            .fillMaxSize()
-            .onSizeChanged { heightPx = it.height.toFloat().coerceAtLeast(1f) }
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onDragEnd = {
-                        scope.launch {
-                            if (-offset.value > heightPx * 0.2f) {
-                                offset.animateTo(-heightPx * 0.6f, tween(180))
-                                currentOnUnlock()
-                            } else {
-                                offset.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
-                            }
-                        }
-                    },
-                    onDragCancel = { scope.launch { offset.animateTo(0f) } },
-                    onVerticalDrag = { change, dy ->
-                        change.consume()
-                        scope.launch { offset.snapTo((offset.value + dy).coerceIn(-heightPx, 0f)) }
-                    },
-                )
-            },
-    ) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    translationY = offset.value * 0.55f
-                    alpha = 1f - (-offset.value / (heightPx * 0.45f)).coerceIn(0f, 1f)
-                }
-                .systemBarsPadding()
-                .padding(horizontal = 28.dp, vertical = 20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            // 顶部：锁 + 电量
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Filled.Lock, contentDescription = null, tint = theme.sub, modifier = Modifier.size(18.dp))
-                BatteryIndicator(battery, theme.sub, style.traditional)
-            }
-
-            Spacer(Modifier.weight(0.32f))
-            ClockFace(now, style, prefs.showSeconds, theme)
-
-            if (alarm != null) {
-                Spacer(Modifier.height(22.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Notifications, contentDescription = null, tint = theme.sub, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(alarm, color = theme.sub, fontSize = 14.sp)
-                }
-            }
-
-            Spacer(Modifier.weight(0.68f))
-            UnlockHint(
-                text = when {
-                    preview -> if (style.traditional) "向上滑動 結束預覽" else "向上滑动 结束预览"
-                    style.traditional -> "向上滑動解鎖"
-                    else -> "向上滑动解锁"
-                },
-                theme = theme,
+        fun open(context: Context, edit: Boolean) {
+            context.startActivity(
+                Intent(context, LockActivity::class.java)
+                    .putExtra(if (edit) EXTRA_EDIT else EXTRA_PREVIEW, true)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
         }
     }
 }
 
-@Composable
-private fun UnlockHint(text: String, theme: ClockTheme) {
-    val bob by rememberInfiniteTransition(label = "hint").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "bob",
-    )
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.graphicsLayer {
-            translationY = -bob * 10.dp.toPx()
-            alpha = 0.55f + 0.45f * bob
-        },
-    ) {
-        Icon(Icons.Filled.KeyboardArrowUp, contentDescription = null, tint = theme.text, modifier = Modifier.size(28.dp))
-        Text(text, color = theme.sub, fontSize = 14.sp, letterSpacing = 3.sp)
+/** 紧急呼叫 / 相机，两种锁屏共用 */
+object LockActions {
+    fun emergencyCall(context: Context): Boolean {
+        val intents = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                add(context.getSystemService(TelecomManager::class.java).createLaunchEmergencyDialerIntent(null))
+            }
+            add(Intent("com.android.phone.EmergencyDialer.DIAL"))
+        }
+        for (i in intents) {
+            try {
+                context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return true
+            } catch (ignored: Exception) {
+            }
+        }
+        Toast.makeText(context, tr("无法打开紧急拨号", "無法開啟緊急撥號", "Can't open emergency dialer"), Toast.LENGTH_SHORT).show()
+        return false
+    }
+
+    /** secure = true 时用安全相机（锁屏状态下只能拍照，看不到相册） */
+    fun openCamera(context: Context, secure: Boolean): Boolean {
+        val action = if (secure) MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE else MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA
+        return try {
+            context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (ignored: Exception) {
+            Toast.makeText(context, tr("无法打开相机", "無法開啟相機", "Can't open camera"), Toast.LENGTH_SHORT).show()
+            false
+        }
     }
 }

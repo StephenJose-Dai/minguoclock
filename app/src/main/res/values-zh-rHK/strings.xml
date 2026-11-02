@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">民國時鐘</string>
+    <string name="widget_name">民國時鐘</string>
+    <string name="widget_desc">時分秒 + 民國日期 + 農曆 + 天氣</string>
+    <string name="widget_date_name">民國日曆</string>
+    <string name="widget_date_desc">日曆方塊：民國年月、日期、星期、農曆</string>
+    <string name="widget_weather_name">民國天氣</string>
+    <string name="widget_weather_desc">目前天氣、溫度範圍和生活建議</string>
+    <string name="widget_quote_name">每日名言</string>
+    <string name="widget_quote_desc">名言佳句，點按換一句</string>
+</resources>
