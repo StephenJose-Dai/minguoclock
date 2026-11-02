@@ -8,7 +8,6 @@ import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
-import android.telecom.TelecomManager
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -173,12 +172,11 @@ class LockActivity : ComponentActivity() {
 /** 紧急呼叫 / 相机，两种锁屏共用 */
 object LockActions {
     fun emergencyCall(context: Context): Boolean {
-        val intents = buildList {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                add(context.getSystemService(TelecomManager::class.java).createLaunchEmergencyDialerIntent(null))
-            }
-            add(Intent("com.android.phone.EmergencyDialer.DIAL"))
-        }
+        // 系统紧急拨号界面（锁屏状态下可用，只能拨打紧急号码）；没有时退回普通拨号盘
+        val intents = listOf(
+            Intent("com.android.phone.EmergencyDialer.DIAL"),
+            Intent(Intent.ACTION_DIAL, android.net.Uri.parse("tel:")),
+        )
         for (i in intents) {
             try {
                 context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
