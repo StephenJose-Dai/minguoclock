@@ -33,6 +33,8 @@ class Prefs(context: Context) {
     var pinHash: String get() = str("pin_hash") ?: ""; set(v) = putStr("pin_hash", v)
     var pinSalt: String get() = str("pin_salt") ?: ""; set(v) = putStr("pin_salt", v)
     var pinLength: Int get() = int("pin_len", 0); set(v) = putInt("pin_len", v)
+    /** 记下的下一个时钟闹钟（被其它应用更早的提醒挡住时继续显示它） */
+    var clockAlarmAt: Long get() = long("clock_alarm_at"); set(v) = putLong("clock_alarm_at", v)
     /** 锁屏密码类型：0 = 数字密码，1 = 图案 */
     var pinType: Int get() = int("pin_type", 0); set(v) = putInt("pin_type", v)
 
@@ -63,6 +65,11 @@ class Prefs(context: Context) {
     var bingDate: String get() = str("bing_date") ?: ""; set(v) = putStr("bing_date", v)
     /** 必应壁纸上次下载成功的时间（“运行状态”里显示，用来确认是否自动更新） */
     var bingFetchedAt: Long get() = long("bing_fetched_at"); set(v) = putLong("bing_fetched_at", v)
+    /** 必应轮换：最近十几天的图片列表（JSON 数组，urlbase）、拉取日期、当前序号、上次更换时间 */
+    var bingList: String get() = str("bing_list") ?: ""; set(v) = putStr("bing_list", v)
+    var bingListDate: String get() = str("bing_list_date") ?: ""; set(v) = putStr("bing_list_date", v)
+    var bingIndex: Int get() = int("bing_index", -1); set(v) = putInt("bing_index", v)
+    var bingChangedAt: Long get() = long("bing_changed_at"); set(v) = putLong("bing_changed_at", v)
     var bingSize: String get() = str("bing_size") ?: ""; set(v) = putStr("bing_size", v)
     var showBingInfo: Boolean get() = bool("show_bing_info", true); set(v) = putBool("show_bing_info", v)
 
@@ -72,9 +79,8 @@ class Prefs(context: Context) {
     /** 锁屏布局 JSON（元素位置/字号/字体 + 贴图） */
     var layoutJson: String? get() = str("layout_json"); set(v) = putStr("layout_json", v)
 
-    /** 0 = 透明白字，1 = 透明深色字，2 = 半透明卡片 */
-    // 换新键：旧版本存过“卡片”的用户统一回到默认的透明白字
-    var widgetStyle: Int get() = int("widget_style_v2", 0); set(v) = putInt("widget_style_v2", v)
+    // 0 = 白字，1 = 深色字，背景都是透明。（“卡片”样式已取消，旧值一律当白字）
+    var widgetStyle: Int get() = int("widget_style_v2", 0).let { if (it == 1) 1 else 0 }; set(v) = putInt("widget_style_v2", v)
 
     // ---- 名言 ----
     var quoteEnabled: Boolean get() = bool("quote_enabled", true); set(v) = putBool("quote_enabled", v)
@@ -112,6 +118,9 @@ class Prefs(context: Context) {
 
     var cityName: String get() = str("weather_city") ?: ""; set(v) = putStr("weather_city", v)
     var locatedAt: Long get() = long("located_at"); set(v) = putLong("located_at", v)
+    /** 上次定位的来源（gps / network / fused / passive）和精度（米，-1 = 未知） */
+    var locSource: String get() = str("loc_source") ?: ""; set(v) = putStr("loc_source", v)
+    var locAccuracy: Int get() = int("loc_accuracy", -1); set(v) = putInt("loc_accuracy", v)
     var weatherCache: String? get() = str("weather_cache_v3"); set(v) = putStr("weather_cache_v3", v)
 
     companion object {

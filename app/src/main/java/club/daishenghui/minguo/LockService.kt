@@ -11,6 +11,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -52,9 +55,12 @@ class LockService : Service() {
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> onScreenOff()
                 Intent.ACTION_SCREEN_ON -> onScreenOn()
+                android.app.AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED -> Alarms.next(context)
                 Intent.ACTION_TIME_TICK, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED -> {
                     updateNotification()
                     checkAlarm()
+                    // 亮屏期间每分钟检查一次：名言、必应壁纸满 30 分钟就换（TIME_TICK 只在亮屏时每分钟来一次，不额外耗电）
+                    rotateIfDue()
                 }
             }
         }
@@ -75,10 +81,13 @@ class LockService : Service() {
             addAction(Intent.ACTION_TIME_TICK)
             addAction(Intent.ACTION_TIME_CHANGED)
             addAction(Intent.ACTION_TIMEZONE_CHANGED)
+            // 闹钟增删改时系统会发这个广播：马上记下新的时钟闹钟
+            addAction(android.app.AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED)
         }
         ContextCompat.registerReceiver(this, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
         watchCallState()
         networkWatch = Region.watchNetwork(this)
+        watchPassiveLocation()
 
         // 崩溃/被回收后重启：如果之前处于锁定状态，立刻重新锁上，防止借机绕过
         val p = Prefs(this)
@@ -96,6 +105,7 @@ class LockService : Service() {
         L.refresh(this)
         // App 打开时（前台）拿到了位置权限：把服务升级为“定位”类型，锁屏熄屏后也能更新位置
         if (!locationActive && wantsLocation(this)) startAsForeground()
+        watchPassiveLocation()
         lastContent = ""
         updateNotification()
         // 关闭锁屏或切到“保留系统密码”时，收起悬浮窗
@@ -115,6 +125,8 @@ class LockService : Service() {
             }
         }
         locationActive = false
+        passiveListener?.let { l -> runCatching { getSystemService(LocationManager::class.java)?.removeUpdates(l) } }
+        passiveListener = null
         handler.removeCallbacksAndMessages(null)
         Region.unwatch(this, networkWatch)
         overlay?.destroy()
@@ -124,8 +136,39 @@ class LockService : Service() {
 
     // ---------- 上锁 ----------
 
+    private var passiveListener: LocationListener? = null
+
+    /** 被动定位：别的应用拿到位置时顺便收到（最多 5 分钟一次、移动 200 米以上才通知），不额外耗电 */
+    private fun watchPassiveLocation() {
+        if (passiveListener != null || !Weather.hasLocationPermission(this)) return
+        val lm = getSystemService(LocationManager::class.java) ?: return
+        // 旧系统的 LocationListener 没有默认方法，四个回调都要写
+        val l = object : LocationListener {
+            override fun onLocationChanged(location: Location) = Weather.onPassiveLocation(this@LockService, location)
+            @Deprecated("Deprecated in Java")
+            override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+        }
+        try {
+            lm.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 5 * 60_000L, 200f, l, Looper.getMainLooper())
+            passiveListener = l
+        } catch (e: Exception) {
+            Log.w(TAG, "被动定位注册失败", e)
+        }
+    }
+
+    /** 满 30 分钟就换名言和必应壁纸 */
+    private fun rotateIfDue() {
+        scope.launch { Quotes.maybeRotate(this@LockService, screenOn = true) }
+        if (Prefs(this).wallpaperMode == Wallpaper.MODE_BING) scope.launch { Wallpaper.refreshBing(this@LockService) }
+    }
+
     private fun onScreenOff() {
         val p = Prefs(this)
+        // 每次熄屏都换一句名言、一张必应壁纸，下次亮屏看到的就是新的（壁纸已预下载，只是本地切换）
+        scope.launch { Quotes.next(this@LockService) }
+        if (p.wallpaperMode == Wallpaper.MODE_BING) scope.launch { Wallpaper.rotateBing(this@LockService) }
         if (!p.lockEnabled || inCall()) return
         if (p.lockMode == Prefs.MODE_REPLACE) {
             showOverlay()
@@ -135,6 +178,14 @@ class LockService : Service() {
     }
 
     private fun onScreenOn() {
+        // 兜底：保留系统密码模式下，亮屏时锁屏页还没在最前面（被系统推迟或拦截了），立刻再拉一次
+        run {
+            val p = Prefs(this)
+            val km = getSystemService(android.app.KeyguardManager::class.java)
+            if (p.lockEnabled && p.lockMode != Prefs.MODE_REPLACE && km.isKeyguardLocked && !LockActivity.visible && !inCall()) {
+                startLockActivity()
+            }
+        }
         scope.launch { Quotes.maybeRotate(this@LockService, screenOn = true) }
         val p = Prefs(this)
         if (p.lockEnabled && p.lockMode == Prefs.MODE_REPLACE && overlay?.isShowing == true) {
@@ -151,17 +202,45 @@ class LockService : Service() {
             overlay = it
         }
         o.show()
-        pendingAlarm = Alarms.nextMillis(this) ?: 0L
+        pendingAlarm = Alarms.next(this) ?: 0L
     }
 
+    /**
+     * 拉起锁屏页（保留系统密码模式）。
+     *
+     * 以前直接 startActivity，有两个延迟：
+     * 1. 安卓的“5 秒规则”：按过 Home 键后，后台应用打开界面会被系统推迟约 5 秒 → 回桌面再锁屏时，先看到系统锁屏，几秒后才出来；
+     * 2. 熄屏后 CPU 很快休眠，界面还没启动完就停住了，亮屏才继续。
+     * 现在：用 PendingIntent 拉起（不受 5 秒规则限制），并在熄屏后保持 CPU 唤醒 3 秒让它启动完。
+     */
     private fun startLockActivity() {
         val intent = Intent(this, LockActivity::class.java).addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS,
         )
+        // 保持 CPU 唤醒 3 秒（不点亮屏幕）
+        runCatching {
+            getSystemService(PowerManager::class.java)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "minguo:lock")
+                .acquire(3_000)
+        }
         try {
-            startActivity(intent)
+            val pi = PendingIntent.getActivity(this, 7, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // Android 14+：发送方要明确允许后台启动
+                android.app.ActivityOptions.makeBasic()
+                    .setPendingIntentBackgroundActivityStartMode(android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                    .toBundle()
+            } else {
+                null
+            }
+            pi.send(this, 0, null, null, null, null, options)
         } catch (e: Exception) {
-            Log.w(TAG, "无法拉起锁屏界面（检查“显示在其他应用上层 / 后台弹出界面”权限）", e)
+            Log.w(TAG, "PendingIntent 拉起失败，改用 startActivity", e)
+            try {
+                startActivity(intent)
+            } catch (e2: Exception) {
+                Log.w(TAG, "无法拉起锁屏界面（检查“显示在其他应用上层 / 后台弹出界面 / 锁屏显示”权限）", e2)
+            }
         }
     }
 

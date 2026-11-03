@@ -110,6 +110,7 @@ class LockActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (ui == LockUi.ACTIVITY) visible = true
         wasLockedWhenShown = getSystemService(KeyguardManager::class.java).isKeyguardLocked
         L.refresh(this)
         // 锁屏可见 = App 在前台：可以定位、刷新天气、换名言
@@ -118,6 +119,11 @@ class LockActivity : ComponentActivity() {
         if (Prefs(this).wallpaperMode == Wallpaper.MODE_BING) {
             lifecycleScope.launch { Wallpaper.refreshBing(this@LockActivity) }
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        visible = false
     }
 
     override fun onDestroy() {
@@ -160,6 +166,11 @@ class LockActivity : ComponentActivity() {
     }
 
     companion object {
+        /** 锁屏页当前是否在最前面（锁屏服务亮屏兜底用） */
+        @Volatile
+        var visible = false
+            private set
+
         const val EXTRA_PREVIEW = "preview"
         const val EXTRA_EDIT = "edit"
 

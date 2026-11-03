@@ -3,30 +3,38 @@ package club.daishenghui.minguo
 import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.provider.AlarmClock
 import android.provider.Settings
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
 
 /**
- * 下一个闹钟。
+ * 下一个闹钟（只认时钟应用里设的闹钟）。
  *
- * 有两个来源，按顺序：
- * 1. AlarmManager.nextAlarmClock：系统记录的“下一个闹钟”。任何应用都能往里写
- *    （日历、待办、健康等），所以要看是谁设的：
- *    - 设定者是时钟应用 → 是闹钟；
- *    - 设定者拿不到（部分系统的时钟把 showIntent 留空，或经系统代设，显示为 android）→
- *      只要系统闹钟文字（见 2）也有值，就认为是闹钟；
- *    - 设定者是别的应用 → 不是闹钟，忽略。
- * 2. Settings.System.NEXT_ALARM_FORMATTED：时钟应用写给系统的“下一个闹钟”文字
- *    （小米、华为等的时钟仍然会写），只在 1 拿不到时用来显示原文。
+ * 0. 先尝试直接读时钟应用的闹钟列表（小米/部分旧版原生时钟开放了 content://com.android.deskclock/alarm）：
+ *    能读到就最准——按每个已开启闹钟的时间、重复日算出最近一次，完全不受其它应用提醒的干扰。
+ *    读不到（系统不开放）才用下面的办法。
  *
- * 判断不了的情况可以在“权限检查 → 运行状态”里看诊断信息。
+ * 系统只提供 AlarmManager.nextAlarmClock = “所有应用里最早的那一个提醒”，任何应用都能写
+ * （日历、待办、健康、某些 App 的定时任务）。所以：
+ * 1. 最早的那个是时钟应用设的 → 就是闹钟，显示，并记下来；
+ *    设定者拿不到（部分系统把 showIntent 留空或由系统代设）时，用时钟应用写给系统的“下一个闹钟文字”
+ *    核对时间：文字里的时:分和它一致才认。只是“文字存在”不算（那段文字可能是很久以前留下的旧值）。
+ * 2. 最早的那个是别的应用设的 → 不显示它；但如果之前记下的时钟闹钟还没到点、且不早于这个提醒，
+ *    说明时钟闹钟只是被挡在后面，继续显示记下的那个。
+ *    如果记下的闹钟比当前最早的提醒还早，说明它已经被关掉/删掉，清除。
+ * 3. 系统里一个提醒都没有 → 没有闹钟，清除记录。
  */
 object Alarms {
     /** 常见品牌的时钟应用包名 */
     private val KNOWN_CLOCKS = setOf(
         "com.android.deskclock",            // AOSP、小米/红米（HyperOS / MIUI）
         "com.google.android.deskclock",     // Google 时钟
-        "com.miui.clock",                   // 小米部分版本
+        "com.miui.clock",
         "com.xiaomi.clock",
         "com.sec.android.app.clockpackage", // 三星
         "com.huawei.deskclock",             // 华为
@@ -62,52 +70,137 @@ object Alarms {
     private fun systemInfo(context: Context): AlarmManager.AlarmClockInfo? =
         runCatching { context.getSystemService(AlarmManager::class.java)?.nextAlarmClock }.getOrNull()
 
-    /** 时钟应用写给系统的下一个闹钟文字，如“周二 07:30”；没有则 null */
+    /** 时钟应用写给系统的下一个闹钟文字（可能是旧值，只用来核对时间） */
     @Suppress("DEPRECATION")
-    fun formatted(context: Context): String? =
+    private fun formatted(context: Context): String? =
         runCatching { Settings.System.getString(context.contentResolver, Settings.System.NEXT_ALARM_FORMATTED) }
             .getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
 
-    sealed class Next {
-        /** 拿到了准确时间 */
-        data class At(val millis: Long) : Next()
-
-        /** 只拿到了时钟应用写的文字 */
-        data class Text(val text: String) : Next()
+    /** 文字里有没有这个时间（24 小时制 07:00 / 7:00，或 12 小时制 7:00） */
+    private fun textMatches(text: String?, millis: Long): Boolean {
+        if (text == null) return false
+        val t = Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalTime()
+        val h12 = if (t.hour % 12 == 0) 12 else t.hour % 12
+        val m = "%02d".format(t.minute)
+        return listOf("%02d:$m".format(t.hour), "${t.hour}:$m", "$h12:$m").any { text.contains(it) }
     }
 
-    fun next(context: Context): Next? {
-        val info = systemInfo(context)
-        val text = formatted(context)
-        if (info != null) {
-            val creator = info.showIntent?.creatorPackage
-            when {
-                creator != null && creator in clocks(context) -> return Next.At(info.triggerTime)
-                (creator == null || creator in SYSTEM_CREATORS) && text != null -> return Next.At(info.triggerTime)
+    private enum class Kind { CLOCK, OTHER }
+
+    private fun classify(context: Context, info: AlarmManager.AlarmClockInfo): Kind {
+        val creator = info.showIntent?.creatorPackage
+        return when {
+            creator != null && creator in clocks(context) -> Kind.CLOCK
+            (creator == null || creator in SYSTEM_CREATORS) && textMatches(formatted(context), info.triggerTime) -> Kind.CLOCK
+            else -> Kind.OTHER
+        }
+    }
+
+    // ---------------- 0. 直接读时钟应用的闹钟列表 ----------------
+
+    private val CLOCK_PROVIDERS = listOf(
+        "content://com.android.deskclock/alarm",
+        "content://com.android.deskclock/alarms",
+    )
+
+    /** 读取结果：available = 能读到列表；next = 最近一次响铃（没有开启的闹钟为 null）；count = 已开启数量 */
+    private data class ProviderResult(val available: Boolean, val next: Long?, val count: Int)
+
+    /**
+     * 重复日 daysofweek 是位掩码：bit0 = 周一 … bit6 = 周日；0 = 只响一次。
+     * 算出从现在起最近的一次响铃时间。
+     */
+    private fun nextOccurrence(hour: Int, minute: Int, days: Int, now: LocalDateTime): LocalDateTime {
+        val time = LocalTime.of(hour.coerceIn(0, 23), minute.coerceIn(0, 59))
+        for (add in 0..7) {
+            val d = LocalDate.from(now).plusDays(add.toLong())
+            val at = LocalDateTime.of(d, time)
+            if (!at.isAfter(now)) continue
+            if (days == 0) return at
+            val bit = d.dayOfWeek.value - 1 // 周一 = 0
+            if (days and (1 shl bit) != 0) return at
+        }
+        return LocalDateTime.of(LocalDate.from(now).plusDays(1), time)
+    }
+
+    private fun fromClockApp(context: Context): ProviderResult {
+        val now = LocalDateTime.now()
+        for (u in CLOCK_PROVIDERS) {
+            val c = runCatching { context.contentResolver.query(Uri.parse(u), null, null, null, null) }.getOrNull() ?: continue
+            c.use { cur ->
+                val hi = cur.getColumnIndex("hour")
+                val mi = cur.getColumnIndex("minutes")
+                if (hi < 0 || mi < 0) return@use
+                val di = cur.getColumnIndex("daysofweek")
+                val ei = cur.getColumnIndex("enabled")
+                var best: LocalDateTime? = null
+                var count = 0
+                while (cur.moveToNext()) {
+                    if (ei >= 0 && cur.getInt(ei) == 0) continue
+                    count++
+                    val at = nextOccurrence(cur.getInt(hi), cur.getInt(mi), if (di >= 0) cur.getInt(di) else 0, now)
+                    if (best == null || at.isBefore(best)) best = at
+                }
+                return ProviderResult(true, best?.atZone(ZoneId.systemDefault())?.toInstant()?.toEpochMilli(), count)
             }
         }
-        return text?.let { Next.Text(it) }
+        return ProviderResult(false, null, 0)
     }
 
-    /** 只要准确时间（锁屏服务判断“闹钟是否正在响”用） */
-    fun nextMillis(context: Context): Long? = (next(context) as? Next.At)?.millis
+    /** 下一个闹钟的响铃时间；没有设闹钟则 null。每次调用都会顺便更新记录 */
+    fun next(context: Context): Long? {
+        // 0. 能直接读时钟应用的闹钟列表就以它为准
+        val app = fromClockApp(context)
+        if (app.available) return app.next
+        val p = Prefs(context)
+        val now = System.currentTimeMillis()
+        val info = systemInfo(context)
+        if (info == null) {
+            // 系统里一个提醒都没有
+            p.clockAlarmAt = 0L
+            return null
+        }
+        if (classify(context, info) == Kind.CLOCK) {
+            p.clockAlarmAt = info.triggerTime
+            return info.triggerTime
+        }
+        // 最早的是别的应用的提醒：用之前记下的时钟闹钟（被挡在后面）
+        val saved = p.clockAlarmAt
+        return when {
+            saved <= now -> {
+                p.clockAlarmAt = 0L
+                null
+            }
+            saved < info.triggerTime -> {
+                // 记下的闹钟比“最早的提醒”还早，说明它已经不存在了
+                p.clockAlarmAt = 0L
+                null
+            }
+            else -> saved
+        }
+    }
 
     /** 诊断信息：系统记录的下一个提醒、设定者、时钟文字、最终判断 */
     fun diagnose(context: Context): String {
         val info = systemInfo(context)
+        fun fmt(ms: Long) = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDateTime()
+            .toString().replace('T', ' ').take(16)
         val creator = info?.showIntent?.creatorPackage
-        val time = info?.let {
-            java.time.Instant.ofEpochMilli(it.triggerTime).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
-                .toString().replace('T', ' ').take(16)
+        val kind = info?.let {
+            if (classify(context, it) == Kind.CLOCK) tr("时钟闹钟", "時鐘鬧鐘", "clock alarm") else tr("其它应用的提醒（忽略）", "其他應用程式的提醒（忽略）", "other app (ignored)")
         }
-        val result = when (val n = next(context)) {
-            is Next.At -> tr("显示", "顯示", "Shown")
-            is Next.Text -> tr("显示（文字）", "顯示（文字）", "Shown (text)") + "：" + n.text
-            null -> tr("不显示", "不顯示", "Hidden")
+        val shown = next(context)
+        val app = fromClockApp(context)
+        val appLine = if (app.available) {
+            tr("可读取，已开启 ${app.count} 个", "可讀取，已開啟 ${app.count} 個", "readable, ${app.count} enabled")
+        } else {
+            tr("系统不开放，改用系统提醒判断", "系統不開放，改用系統提醒判斷", "not available, using system alarm")
         }
-        return tr("系统下一个提醒：", "系統下一個提醒：", "System next alarm: ") + (time ?: "—") + "\n" +
+        return tr("时钟应用闹钟列表：", "時鐘應用程式鬧鐘列表：", "Clock app alarms: ") + appLine + "\n" +
+            tr("系统最早的提醒：", "系統最早的提醒：", "System earliest: ") + (info?.let { fmt(it.triggerTime) } ?: "—") +
+            (kind?.let { "（$it）" } ?: "") + "\n" +
             tr("设定者：", "設定者：", "Set by: ") + (creator ?: "—") + "\n" +
             tr("时钟文字：", "時鐘文字：", "Clock text: ") + (formatted(context) ?: "—") + "\n" +
-            tr("锁屏闹钟：", "鎖定畫面鬧鐘：", "Lock screen: ") + result
+            tr("锁屏显示的闹钟：", "鎖定畫面顯示的鬧鐘：", "Shown alarm: ") + (shown?.let(::fmt) ?: tr("不显示", "不顯示", "none"))
     }
 }

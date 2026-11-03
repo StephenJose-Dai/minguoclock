@@ -1122,7 +1122,7 @@ private fun CitySearchDialog(lang: Lang, onDismiss: () -> Unit, onPick: (CityRes
 private fun WidgetsPage() {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
-    var style by remember { mutableIntStateOf(prefs.widgetStyle.coerceIn(0, 2)) }
+    var style by remember { mutableIntStateOf(prefs.widgetStyle) }
     // 进入本页时刷新一次桌面小组件，确保显示的是当前样式
     LaunchedEffect(Unit) { Widgets.updateAll(ctx) }
 
@@ -1137,7 +1137,7 @@ private fun WidgetsPage() {
         Spacer(Modifier.height(10.dp))
         Text(tr("样式", "樣式", "Style"), color = SubText, fontSize = 13.sp)
         Spacer(Modifier.height(6.dp))
-        ChoiceRow(listOf(tr("白字", "白字", "Light"), tr("深色字", "深色字", "Dark"), tr("卡片", "卡片", "Card")), style) {
+        ChoiceRow(listOf(tr("白字", "白字", "Light"), tr("深色字", "深色字", "Dark")), style) {
             style = it
             prefs.widgetStyle = it
             Widgets.updateAll(ctx)
@@ -1145,9 +1145,9 @@ private fun WidgetsPage() {
         Spacer(Modifier.height(4.dp))
         Paragraph(
             tr(
-                "白字、深色字：背景透明，分别适合深色、浅色壁纸；卡片：半透明深色圆角背景，任何壁纸都看得清。",
-                "白字、深色字：背景透明，分別適合深色、淺色桌布；卡片：半透明深色圓角背景，任何桌布都看得清。",
-                "Light/Dark: transparent, for dark/light wallpapers. Card: translucent rounded background, readable anywhere.",
+                "背景始终透明、没有边框。白字适合深色壁纸，深色字适合浅色壁纸。\n大小：在桌面长按小组件拖动边框调整，宽度最多到屏幕宽，高度最小 100dp、最大 360dp，文字会跟着缩放。",
+                "背景始終透明、沒有邊框。白字適合深色桌布，深色字適合淺色桌布。\n大小：在桌面長按小工具拖動邊框調整，寬度最多到螢幕寬，高度最小 100dp、最大 360dp，文字會跟著縮放。",
+                "Always transparent, no frame. Light text for dark wallpapers, dark text for light ones.\nSize: long-press the widget and drag its edges; width up to the screen width, height 100–360dp, text scales.",
             ),
         )
         Spacer(Modifier.height(10.dp))
@@ -1264,26 +1264,45 @@ private fun RunStatusSection(tick: Int) {
     val lines = remember(tick, refresh, weather) {
         buildString {
             append(tr("名言上次更换：", "名言上次更換：", "Quote changed: ")).append(fmt(p.quoteChangedAt)).append('\n')
-            append(tr("　规则：每 30 分钟换一句，在亮屏或小组件刷新时生效", "　規則：每 30 分鐘換一句，在亮屏或小工具重新整理時生效", "  Rule: every 30 min, applied on screen-on or widget refresh")).append("\n\n")
+            append(tr("　规则：每次熄屏换一句；亮屏期间每 30 分钟换一句", "　規則：每次熄屏換一句；亮屏期間每 30 分鐘換一句", "  Rule: new quote on every screen-off, and every 30 min while on")).append("\n\n")
             if (p.wallpaperMode == Wallpaper.MODE_BING) {
-                append(tr("必应壁纸日期：", "Bing 桌布日期：", "Bing wallpaper date: ")).append(p.bingDate.ifBlank { "—" }).append('\n')
-                append(tr("必应上次下载：", "Bing 上次下載：", "Bing downloaded: ")).append(fmt(p.bingFetchedAt)).append('\n')
-                append(tr("　规则：每天一张，日期变了就会下载新图（每 6 小时检查一次，亮屏时也会检查）", "　規則：每天一張，日期變了就會下載新圖（每 6 小時檢查一次，亮屏時也會檢查）", "  Rule: one per day; checked every 6 h and on screen-on")).append("\n\n")
+                val total = runCatching { org.json.JSONArray(p.bingList).length() }.getOrDefault(0)
+                append(tr("必应壁纸上次更换：", "Bing 桌布上次更換：", "Bing wallpaper changed: ")).append(fmt(p.bingChangedAt)).append('\n')
+                append(tr("当前第 ", "目前第 ", "Showing ")).append(p.bingIndex + 1).append(" / ").append(total)
+                    .append(tr(" 张（最近十几天的必应壁纸轮换）", " 張（最近十幾天的 Bing 桌布輪換）", " (recent Bing wallpapers)")).append('\n')
+                append(tr("　规则：每次熄屏换一张；亮屏期间每 30 分钟换一张", "　規則：每次熄屏換一張；亮屏期間每 30 分鐘換一張", "  Rule: new wallpaper on every screen-off, and every 30 min while on")).append("\n\n")
             } else {
                 append(tr("必应壁纸：未使用（壁纸页选“必应每日”后生效）", "Bing 桌布：未使用（桌布頁選「Bing 每日」後生效）", "Bing wallpaper: not in use")).append("\n\n")
             }
             append(tr("天气上次更新：", "天氣上次更新：", "Weather updated: ")).append(fmt(weather?.fetchedAt ?: 0L)).append('\n')
             append(tr("上次定位：", "上次定位：", "Last located: ")).append(fmt(p.locatedAt)).append('\n')
+            val src = p.locSource
+            if (src.isNotBlank()) {
+                val name = when {
+                    src.startsWith("passive") -> tr("被动定位（其它应用的位置）", "被動定位（其他應用程式的位置）", "passive (from other apps)")
+                    src == "gps" -> "GPS"
+                    src == "network" -> tr("网络定位（Wi-Fi/基站）", "網路定位（Wi-Fi/基地台）", "network (Wi-Fi/cell)")
+                    src == "fused" -> tr("融合定位", "融合定位", "fused")
+                    else -> src
+                }
+                append(tr("　方式：", "　方式：", "  Source: ")).append(name)
+                if (p.locAccuracy >= 0) append(tr("，精度约 ", "，精度約 ", ", about ")).append(p.locAccuracy).append(tr(" 米", " 公尺", " m"))
+                append('\n')
+            }
             append(tr("锁屏时可定位：", "鎖定時可定位：", "Can locate when locked: "))
                 .append(if (LockService.locationActive || Weather.hasBackgroundLocation(ctx)) tr("是", "是", "Yes") else tr("否（打开一次 App 后生效）", "否（開啟一次 App 後生效）", "No (open the app once)"))
                 .append("\n\n")
             append(tr("小组件样式：", "小工具樣式：", "Widget style: ")).append(
                 when (p.widgetStyle) {
                     1 -> tr("深色字（透明）", "深色字（透明）", "Dark (transparent)")
-                    2 -> tr("卡片（有底框）", "卡片（有底框）", "Card (with background)")
                     else -> tr("白字（透明）", "白字（透明）", "Light (transparent)")
                 },
-            ).append("\n\n")
+            ).append('\n')
+            val placed = Widgets.placedCount(ctx)
+            append(tr("本应用在桌面上的小组件：", "本應用程式在桌面上的小工具：", "Widgets placed by this app: ")).append(placed).append('\n')
+            append(tr("小组件上次更新：", "小工具上次更新：", "Widget updated: ")).append(fmt(Widgets.lastUpdate)).append('\n')
+            Widgets.lastError?.let { append(tr("小组件更新出错：", "小工具更新出錯：", "Widget error: ")).append(it).append('\n') }
+            append(tr("本应用：", "本應用程式：", "This app: ")).append(ctx.packageName).append(" v").append(Maintenance.versionName(ctx)).append("\n\n")
             append(Alarms.diagnose(ctx))
         }
     }

@@ -16,6 +16,7 @@ import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -117,49 +118,110 @@ object Wallpaper {
         return ordered.map { "$host$urlbase${it.suffix}" }
     }
 
-    /** 下载必应每日壁纸（按屏幕尺寸选清晰度），当天已下载则跳过 */
-    suspend fun refreshBing(context: Context, force: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+    // ======================== 必应壁纸轮换 ========================
+    //
+    // 在最近十几天的必应壁纸里轮换：
+    // - 每次熄屏换一张（下次亮屏就是新图）；亮屏期间每 30 分钟换一张；
+    // - 图片列表每天拉一次；图片下载后缓存在 cache/bing，换图时只是本地复制，不用等网络；
+    // - 每次换完顺便预下载下一张，所以熄屏切换几乎是瞬间完成。
+
+    /** 换图间隔 */
+    const val BING_INTERVAL_MS = 30 * 60 * 1000L
+
+    private val bingMutex = kotlinx.coroutines.sync.Mutex()
+
+    private fun bingCacheDir(context: Context) = File(context.cacheDir, "bing").apply { mkdirs() }
+
+    private fun cacheName(urlbase: String) =
+        urlbase.substringAfter("id=").replace(Regex("[^A-Za-z0-9._-]"), "_").take(90).ifBlank { urlbase.hashCode().toString() } + ".jpg"
+
+    private suspend fun hosts(context: Context): List<String> {
+        val preferred = Region.bingHost(context)
+        return listOf(preferred) + listOf("https://cn.bing.com", "https://www.bing.com").filter { it != preferred }
+    }
+
+    /** 图片列表（urlbase），每天拉一次；拉不到就用旧列表 */
+    private suspend fun ensureList(context: Context): List<String> {
         val p = Prefs(context)
         val today = LocalDate.now().toString()
-        val (sw, sh) = screenSize(context)
-        val sizeKey = "${sw}x$sh"
-        if (!force && p.bingDate == today && p.bingSize == sizeKey && bingFile(context).exists()) return@withContext true
-        try {
-            // 按 IP 选大陆 / 境外节点，失败时换另一个
-            val preferred = Region.bingHost(context)
-            val hosts = listOf(preferred) + listOf("https://cn.bing.com", "https://www.bing.com").filter { it != preferred }
-            val mkt = Region.bingMarket(context)
-            var bytes: ByteArray? = null
-            var img: JSONObject? = null
-            for (host in hosts) {
-                val market = if (host.contains("cn.bing")) "zh-CN" else mkt
-                val meta = runCatching {
-                    JSONObject(Net.get("$host/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=$market"))
-                        .getJSONArray("images").getJSONObject(0)
-                }.getOrNull() ?: continue
-                val urlbase = meta.getString("urlbase")
-                for (u in bingCandidates(context, host, urlbase) + (host + meta.getString("url"))) {
-                    bytes = runCatching { Net.bytes(u) }.getOrNull()?.takeIf { it.size > 10_000 }
-                    if (bytes != null) break
-                }
-                if (bytes != null) {
-                    img = meta
-                    break
+        val old = runCatching { org.json.JSONArray(p.bingList).let { a -> (0 until a.length()).map { a.getString(it) } } }
+            .getOrDefault(emptyList())
+        if (p.bingListDate == today && old.isNotEmpty()) return old
+        val mkt = Region.bingMarket(context)
+        for (host in hosts(context)) {
+            val market = if (host.contains("cn.bing")) "zh-CN" else mkt
+            val list = LinkedHashSet<String>()
+            // 必应一次最多给 8 张：idx=0 取最近 8 天，idx=7 再取更早的 8 天
+            for (idx in listOf(0, 7)) {
+                runCatching {
+                    val arr = JSONObject(Net.get("$host/HPImageArchive.aspx?format=js&idx=$idx&n=8&mkt=$market")).getJSONArray("images")
+                    for (k in 0 until arr.length()) list.add(arr.getJSONObject(k).getString("urlbase"))
                 }
             }
-            if (img == null) error("bing unavailable")
-            val data = bytes ?: error("no image")
-            writeAtomically(bingFile(context)) { it.write(data) }
-            p.bingSize = sizeKey
-            p.bingCopyright = img.optString("copyright")
-            p.bingDate = today
-            p.bingFetchedAt = System.currentTimeMillis()
-            _version.value++
-            true
-        } catch (e: Exception) {
-            Log.w(TAG, "必应壁纸下载失败", e)
-            false
+            if (list.isNotEmpty()) {
+                p.bingList = org.json.JSONArray(list.toList()).toString()
+                p.bingListDate = today
+                // 清理不在列表里的旧缓存
+                val keep = list.map(::cacheName).toSet()
+                bingCacheDir(context).listFiles()?.forEach { if (it.name !in keep) it.delete() }
+                return list.toList()
+            }
         }
+        return old
+    }
+
+    /** 取第 i 张的本地文件：有缓存直接用，没有就按屏幕尺寸下载 */
+    private suspend fun imageFile(context: Context, urlbase: String): File? {
+        val f = File(bingCacheDir(context), cacheName(urlbase))
+        if (f.exists() && f.length() > 10_000) return f
+        for (host in hosts(context)) {
+            for (u in bingCandidates(context, host, urlbase)) {
+                val bytes = runCatching { Net.bytes(u) }.getOrNull()?.takeIf { it.size > 10_000 } ?: continue
+                writeAtomically(f) { it.write(bytes) }
+                return f
+            }
+        }
+        return null
+    }
+
+    /** 立刻换下一张（熄屏、30 分钟到、点“立即更新”时调用） */
+    suspend fun rotateBing(context: Context): Boolean = withContext(Dispatchers.IO) {
+        bingMutex.withLock {
+            try {
+                val p = Prefs(context)
+                val list = ensureList(context)
+                if (list.isEmpty()) return@withLock false
+                val start = (p.bingIndex + 1).mod(list.size)
+                for (k in list.indices) {
+                    val idx = (start + k) % list.size
+                    val f = imageFile(context, list[idx]) ?: continue
+                    writeAtomically(bingFile(context)) { out -> f.inputStream().use { it.copyTo(out) } }
+                    val now = System.currentTimeMillis()
+                    p.bingIndex = idx
+                    p.bingChangedAt = now
+                    p.bingFetchedAt = now
+                    p.bingDate = LocalDate.now().toString()
+                    _version.value++
+                    // 预下载下一张，下次切换不用等网络
+                    runCatching { imageFile(context, list[(idx + 1) % list.size]) }
+                    return@withLock true
+                }
+                false
+            } catch (e: Exception) {
+                Log.w(TAG, "必应壁纸更换失败", e)
+                false
+            }
+        }
+    }
+
+    /**
+     * 亮屏、打开锁屏页、后台任务时调用：没有图就下一张；距上次更换满 30 分钟就换；force = 立刻换。
+     */
+    suspend fun refreshBing(context: Context, force: Boolean = false): Boolean {
+        val p = Prefs(context)
+        val due = force || !bingFile(context).exists() ||
+            System.currentTimeMillis() - p.bingChangedAt >= BING_INTERVAL_MS
+        return if (due) rotateBing(context) else true
     }
 
     /** 读取壁纸，按目标尺寸采样，顺便算亮度 */
@@ -225,14 +287,15 @@ object Wallpaper {
             wm.cancelUniqueWork(WORK_NAME)
             return
         }
-        val req = PeriodicWorkRequestBuilder<BingWorker>(6, TimeUnit.HOURS)
+        // 每 30 分钟检查一次（满 30 分钟就换图）。UPDATE：已安装旧版（6 小时）的手机也会改成新周期
+        val req = PeriodicWorkRequestBuilder<BingWorker>(30, TimeUnit.MINUTES)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()
-        wm.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, req)
+        wm.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, req)
     }
 }
 
-/** 每 6 小时检查一次必应今日壁纸 */
+/** 每 30 分钟：满 30 分钟就换一张必应壁纸 */
 class BingWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result =
         if (Wallpaper.refreshBing(applicationContext)) Result.success() else Result.retry()

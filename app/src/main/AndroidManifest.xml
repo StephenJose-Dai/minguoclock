@@ -8,6 +8,8 @@
     <!-- 可选：「始终允许」。不给也行，锁屏服务以定位类型运行时同样能在后台定位 -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 熄屏后短暂保持 CPU 唤醒，让锁屏页启动完 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- 锁屏服务带“定位”类型：只给「仅在使用中允许」也能在锁屏、熄屏时更新位置 -->
@@ -27,6 +29,8 @@
         <intent>
             <action android:name="android.intent.action.SET_ALARM" />
         </intent>
+        <!-- 读取时钟应用的闹钟列表（小米等开放了的系统才能读到） -->
+        <package android:name="com.android.deskclock" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.APP_CALENDAR" />

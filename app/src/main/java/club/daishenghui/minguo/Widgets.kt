@@ -72,6 +72,20 @@ object Widgets {
     const val ACTION_NEXT_QUOTE = "club.daishenghui.minguo.NEXT_QUOTE"
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /** 运行状态用：上次成功更新的时间、上次的错误 */
+    @Volatile
+    var lastUpdate = 0L
+        private set
+
+    @Volatile
+    var lastError: String? = null
+        private set
+
+    /** 本应用（本安装包）放在桌面上的小组件数量。桌面上看得到、这里却是 0，说明那个小组件属于另一个安装包（如正式版/调试版） */
+    fun placedCount(context: Context): Int =
+        runCatching { AppWidgetManager.getInstance(context).getAppWidgetIds(ComponentName(context, ClockWidget::class.java)).size }
+            .getOrDefault(0)
+
     fun updateAll(context: Context) {
         val mgr = AppWidgetManager.getInstance(context)
         val ids = mgr.getAppWidgetIds(ComponentName(context, ClockWidget::class.java))
@@ -80,7 +94,10 @@ object Widgets {
             ids.forEach { id ->
                 try {
                     mgr.updateAppWidget(id, build(context, mgr.getAppWidgetOptions(id)))
+                    lastUpdate = System.currentTimeMillis()
+                    lastError = null
                 } catch (e: Exception) {
+                    lastError = e.javaClass.simpleName + ": " + (e.message ?: "")
                     // 更新失败时桌面会一直留着旧样子（比如旧版的卡片底框），所以退一步只画时间和日期，保证样式更新到位
                     Log.e("Widgets", "小组件更新失败，改用简化版", e)
                     runCatching { mgr.updateAppWidget(id, fallback(context)) }
@@ -108,14 +125,11 @@ object Widgets {
         return minOf(w / 250f, h / 180f).coerceIn(0.55f, 1.6f)
     }
 
-    /** 背景：只有选了“卡片”才有底框；其它样式明确设为全透明（不留任何底色） */
+    /** 背景：始终全透明，不留任何底色和边框 */
+    @Suppress("UNUSED_PARAMETER")
     private fun applyBackground(rv: RemoteViews, style: Int) {
-        if (style == 2) {
-            rv.setInt(R.id.widget_root, "setBackgroundResource", R.drawable.widget_card_bg)
-        } else {
-            rv.setInt(R.id.widget_root, "setBackgroundResource", 0)
-            rv.setInt(R.id.widget_root, "setBackgroundColor", android.graphics.Color.TRANSPARENT)
-        }
+        rv.setInt(R.id.widget_root, "setBackgroundResource", 0)
+        rv.setInt(R.id.widget_root, "setBackgroundColor", android.graphics.Color.TRANSPARENT)
     }
 
     /** 简化版：只有时间、日期，透明背景 */
@@ -134,7 +148,7 @@ object Widgets {
         val p = Prefs(context)
         val style = p.style()
         val lang = style.lang
-        // 0 = 白字（透明背景），1 = 深色字（透明背景），2 = 卡片（半透明深色圆角背景 + 白字）
+        // 0 = 白字，1 = 深色字；背景始终透明，没有任何底框
         val dark = p.widgetStyle == 1
         val main = if (dark) 0xFF1E1E1E.toInt() else 0xFFFFFFFF.toInt()
         val sub = if (dark) 0xB31E1E1E.toInt() else 0xDDFFFFFF.toInt()

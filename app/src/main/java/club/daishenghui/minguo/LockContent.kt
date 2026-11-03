@@ -229,11 +229,7 @@ fun LockContent(
     val is24 = DateFormat.is24HourFormat(ctx)
     val alarm = remember(now.minute, lang) {
         // 只显示时钟应用设的闹钟；没设闹钟时为 null，锁屏上就不显示
-        when (val n = Alarms.next(ctx)) {
-            is Alarms.Next.At -> RocCalendar.alarmText(n.millis, now, is24, lang)
-            is Alarms.Next.Text -> n.text
-            null -> null
-        }
+        Alarms.next(ctx)?.let { RocCalendar.alarmText(it, now, is24, lang) }
     }
 
     val swipe = if (interactive && !showPin) {

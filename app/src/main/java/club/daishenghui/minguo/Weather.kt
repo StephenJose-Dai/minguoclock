@@ -23,7 +23,11 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -243,6 +247,9 @@ object Weather {
     /** 上次自动定位的尝试时间（无论成功与否），用来限制 GPS 频率 */
     @Volatile
     private var lastLocateAttempt = 0L
+
+    /** 定位失败后多久可以重试 */
+    private const val RETRY_MS = 5 * 60 * 1000L
     private const val WORK_NAME = "weather_refresh"
     const val SRC_TENCENT = "tencent"
     const val SRC_OPEN_METEO = "open-meteo"
@@ -299,10 +306,9 @@ object Weather {
             // 前台可见、有“始终允许”、或锁屏服务以定位类型运行，都可以定位
             val canLocate = p.autoLocate && hasLocationPermission(context) &&
                 (inForeground || hasBackgroundLocation(context) || LockService.locationActive)
-            // 30 分钟内定位过、或者尝试过（哪怕失败了）都不再开 GPS，防止搜不到星时反复重试耗电
+            // 成功定位后 30 分钟内不再定位；失败了 5 分钟后才重试（防止搜不到星时反复开 GPS 耗电）
             val now = System.currentTimeMillis()
-            val sinceLast = now - maxOf(p.locatedAt, lastLocateAttempt)
-            if (canLocate && (p.lat.isNaN() || sinceLast > RELOCATE_MS) && now - lastLocateAttempt > RELOCATE_MS) {
+            if (canLocate && locationDue(p, now)) {
                 lastLocateAttempt = now
                 locate(context)?.let { r ->
                     setLocation(context, r.name, r.location.latitude, r.location.longitude, r.place)
@@ -342,10 +348,57 @@ object Weather {
         }
     }
 
+    @Volatile
+    private var passiveRefreshAt = 0L
+
+    /**
+     * 被动定位（和手机自带天气一样）：别的应用（导航、地图、打车…）拿到位置时，系统顺便发给我们，不额外耗电。
+     * - 离当前天气位置不到 1 公里：只记一下“刚确认过位置”，省掉下一次主动定位；
+     * - 超过 1 公里（换地方了）：直接用这个位置更新城市和天气（5 分钟内最多一次）。
+     */
+    fun onPassiveLocation(context: Context, loc: Location) {
+        val p = Prefs(context)
+        if (!p.weatherEnabled || !p.autoLocate) return
+        if (loc.hasAccuracy() && loc.accuracy > 500f) return
+        val now = System.currentTimeMillis()
+        if (now - loc.time > 10 * 60 * 1000L) return // 太旧的不要
+        if (!p.lat.isNaN()) {
+            val d = FloatArray(1)
+            Location.distanceBetween(p.lat, p.lon, loc.latitude, loc.longitude, d)
+            if (d[0] < 1_000f) {
+                p.locatedAt = now
+                return
+            }
+        }
+        if (now - passiveRefreshAt < 5 * 60 * 1000L) return
+        passiveRefreshAt = now
+        ioScope.async {
+            val place = bounded(8_000) { Geo.reverse(loc.latitude, loc.longitude) }
+                ?: bounded(6_000) { geocoderPlaceBlocking(context, loc) }
+            setLocation(context, place?.label ?: p.cityName, loc.latitude, loc.longitude, place)
+            p.locatedAt = System.currentTimeMillis()
+            p.locSource = "passive:" + (loc.provider ?: "")
+            p.locAccuracy = if (loc.hasAccuracy()) loc.accuracy.toInt() else -1
+            refresh(context, inForeground = false)
+        }
+    }
+
+    /** 位置是否该更新了：没有位置，或成功定位已超过 30 分钟；且距上次尝试超过 5 分钟 */
+    private fun locationDue(p: Prefs, now: Long) =
+        (p.lat.isNaN() || now - p.locatedAt > RELOCATE_MS) && now - lastLocateAttempt > RETRY_MS
+
+    /**
+     * 天气超过 30 分钟，或者开着自动定位且位置该更新了，就刷新。
+     * 以前只看天气是否过期：天气还新的时候不会自动定位，只能手动点“定位”。
+     */
     suspend fun refreshIfStale(context: Context, inForeground: Boolean) {
         init(context)
+        val p = Prefs(context)
+        val now = System.currentTimeMillis()
         val last = _state.value?.fetchedAt ?: 0L
-        if (System.currentTimeMillis() - last > STALE_MS) refresh(context, inForeground)
+        val canLocate = p.autoLocate && hasLocationPermission(context) &&
+            (inForeground || hasBackgroundLocation(context) || LockService.locationActive)
+        if (now - last > STALE_MS || (canLocate && locationDue(p, now))) refresh(context, inForeground)
     }
 
     // ---------- Open-Meteo ----------
@@ -591,15 +644,46 @@ object Weather {
         }
 
         if (loc == null) {
-            for (provider in active) {
-                // GPS 冷启动搜星需要时间，给 30 秒；室内搜不到就换网络定位
-                val timeout = if (provider == LocationManager.GPS_PROVIDER) 30_000L else 10_000L
-                loc = withTimeoutOrNull(timeout) { currentLocation(context, lm, provider) }
-                if (loc != null) break
+            // 参考手机自带天气的做法：
+            // 1. 网络定位（Wi-Fi + 基站）优先：1–2 秒出结果，城市里一般几十米内，精度 ≤ 100 米就直接用；
+            // 2. 网络定位不够准（或拿不到）时才用 GPS 补充，取两者中更准的；
+            // 3. 全部同时开始，最坏 15 秒内结束。
+            val gpsProvider = LocationManager.GPS_PROVIDER
+            loc = coroutineScope {
+                val gps = if (gpsProvider in active) async { withTimeoutOrNull(15_000) { currentLocation(context, lm, gpsProvider) } } else null
+                val got = java.util.concurrent.ConcurrentLinkedQueue<Location>()
+                val nets = active.filter { it != gpsProvider }.map { pr ->
+                    async { withTimeoutOrNull(10_000) { currentLocation(context, lm, pr) }?.also { got.add(it) } }
+                }
+                fun acc(l: Location) = if (l.hasAccuracy()) l.accuracy else Float.MAX_VALUE
+                fun netDone(): List<Location> = got.toList()
+                // 最多等 6 秒网络定位；只要有一个 ≤ 100 米就不用等了
+                var waited = 0L
+                while (waited < 6_000 && (nets.any { !it.isCompleted }) && netDone().none { acc(it) <= 100f }) {
+                    kotlinx.coroutines.delay(200)
+                    waited += 200
+                }
+                val netBest = netDone().minByOrNull(::acc)
+                val result = if (netBest != null && acc(netBest) <= 100f) {
+                    netBest
+                } else {
+                    // 网络定位不够准：等 GPS（总共最多 15 秒），和网络结果比谁更准
+                    val g = gps?.await()
+                    nets.forEach { it.await() }
+                    (listOfNotNull(g) + netDone()).minByOrNull(::acc)
+                }
+                (listOfNotNull(gps) + nets).forEach { it.cancel() }
+                result
             }
         }
         val found = loc ?: lastKnown() ?: return null
-        val place = withContext(Dispatchers.IO) { Geo.reverse(found.latitude, found.longitude) } ?: geocoderPlace(context, found)
+        Prefs(context).apply {
+            locSource = found.provider ?: ""
+            locAccuracy = if (found.hasAccuracy()) found.accuracy.toInt() else -1
+        }
+        // 地名反查放到独立线程，最多等 8 秒（网络卡住也不会让“定位中”一直转）
+        val place = bounded(8_000) { Geo.reverse(found.latitude, found.longitude) }
+            ?: bounded(6_000) { geocoderPlaceBlocking(context, found) }
         return Located(place?.label ?: "", found, place)
     }
 
@@ -640,14 +724,21 @@ object Weather {
 
     /** BigDataCloud 不可用时，用系统自带的 Geocoder 反查 */
     @Suppress("DEPRECATION")
-    private suspend fun geocoderPlace(context: Context, loc: Location): Geo.Place? = withContext(Dispatchers.IO) {
+    /** 后台线程执行可能卡住的网络/系统调用，最多等 ms 毫秒；超时就放弃等待（调用本身在后台自行结束） */
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private suspend fun <T> bounded(ms: Long, block: () -> T?): T? {
+        val d = ioScope.async { runCatching(block).getOrNull() }
+        return withTimeoutOrNull(ms) { d.await() }
+    }
+
+    private fun geocoderPlaceBlocking(context: Context, loc: Location): Geo.Place? =
         runCatching {
             if (!Geocoder.isPresent()) return@runCatching null
             val a = Geocoder(context, Locale.CHINA).getFromLocation(loc.latitude, loc.longitude, 1)?.firstOrNull()
                 ?: return@runCatching null
             Geo.Place(a.countryCode ?: "", a.adminArea ?: "", a.locality ?: a.subAdminArea ?: "", a.subLocality ?: "")
         }.getOrNull()
-    }
 
     // ---------- 定时刷新 ----------
 
