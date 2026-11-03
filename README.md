@@ -1,4 +1,4 @@
-# 民国纪年 MinguoClock v3.14
+# 民国纪年 MinguoClock v3.16
 
 Android 民国纪年锁屏 + 桌面小组件 + 通知栏民国日期。作者：StephenJose_Dai
 
@@ -35,6 +35,7 @@ Android 民国纪年锁屏 + 桌面小组件 + 通知栏民国日期。作者：
 - 华为鸿蒙 HarmonyOS 2 / 3 / 4（兼容安卓应用）可用；**纯血鸿蒙 HarmonyOS NEXT / 5 及以上不能安装 APK**，需要用 ArkTS 另写一个鸿蒙原生版。
 
 **其他**
+- 界面主题：暗黑（默认，黑金配色）/ 白天 / 自动（6:00–18:00 白天，其余暗黑），在「设置 → 主题、壁纸与字体」切换；只影响 App 界面，锁屏颜色跟随壁纸。
 - 语言只支持简体、繁體：默认跟随系统（繁体系统用繁體，其它用简体），可手动指定；纪年可选「民國」/「中華民國」，中文数字可选。
 - 通知栏常驻民国日期 + 农历 + 天气。
 - 一个 4×3 小组件：时间、民国日期、农历、天气、名言；背景始终透明无边框，可选白字 / 深色字；可拖动调整宽高（宽度最多到屏幕宽，高度 100–360dp），字号随大小缩放；点天气打开本应用天气页，点名言换一句。
@@ -45,11 +46,11 @@ Android 民国纪年锁屏 + 桌面小组件 + 通知栏民国日期。作者：
 
 ## 编译
 
-推到 GitHub 后 Actions 自动编译，一次出 10 个 APK（在该次运行页面的 Artifacts 里下载；推送 `v3.14.1` 这样的 tag 会自动发布到 Releases）：
+推到 GitHub 后 Actions 自动编译，一次出 10 个 APK（在该次运行页面的 Artifacts 里下载；推送 `v3.16.0` 这样的 tag 会自动发布到 Releases）：
 
 | 文件 | 用途 |
 |---|---|
-| `MinguoClock-v3.14.1-universal-release.apk` | **不知道选哪个就用这个**，所有手机通用 |
+| `MinguoClock-v3.16.0-universal-release.apk` | **不知道选哪个就用这个**，所有手机通用 |
 | `…-arm64-v8a-release.apk` | 2017 年以后的绝大多数手机 |
 | `…-armeabi-v7a-release.apk` | 老的 32 位手机 |
 | `…-x86_64-release.apk` / `…-x86-release.apk` | 电脑上的安卓模拟器 |
@@ -97,7 +98,7 @@ Android 民国纪年锁屏 + 桌面小组件 + 通知栏民国日期。作者：
 ## 文件结构
 
 ```
-app/src/main/java/club/daishenghui/minguo/
+app/src/main/java/app/minguo/calendar/
 ├── MinguoApp.kt     崩溃自动重启、15 分钟自检
 ├── MainActivity.kt  首页 + 设置菜单（缓存/重置/更新/反馈/关于）
 ├── LockActivity.kt  保留系统密码模式锁屏、预览、编辑布局；紧急呼叫/相机
@@ -119,7 +120,13 @@ app/src/main/java/club/daishenghui/minguo/
 ├── Security.kt      锁屏密码（加盐哈希）
 ├── Maintenance.kt   清缓存、重置、检查更新、反馈
 ├── RocCalendar.kt   民国/中华民国纪年、农历
+├── AppTheme.kt      界面主题（暗黑 / 白天 / 自动）和配色
 ├── Lang.kt          语言
 ├── ClockUi.kt       背景、数字动画等通用组件
 ├── Prefs.kt / Config.kt / Net.kt / ClockThemes.kt / BootReceiver.kt
 ```
+
+## 第三方素材
+
+- 「关于」页的 GitHub 图标来自 GitHub 官方图标库 [Octicons](https://github.com/primer/octicons)（mark-github），MIT 授权，授权文本见 `app/src/main/assets/licenses/Octicons-LICENSE.txt`。
+- 内置字体的授权见 `app/src/main/assets/fonts/licenses/`。

@@ -5,15 +5,15 @@ plugins {
 }
 
 android {
-    namespace = "club.daishenghui.minguo"
+    namespace = "app.minguo.calendar"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "club.daishenghui.minguo"
+        applicationId = "app.minguo.calendar"
         minSdk = 24 // Android 7.0
         targetSdk = 35
-        versionCode = 20
-        versionName = "3.14.1"
+        versionCode = 23
+        versionName = "3.16.0"
     }
 
     // 签名：默认用仓库里的 keystore/minguo.jks（每次编译签名一致，可直接覆盖升级）；

@@ -767,7 +767,7 @@
             android:name=".IconPickerActivity"
             android:excludeFromRecents="true"
             android:exported="false"
-            android:taskAffinity="club.daishenghui.minguo.icon"
+            android:taskAffinity="app.minguo.calendar.icon"
             android:theme="@style/Theme.Minguo" />
 
         <activity
@@ -776,7 +776,7 @@
             android:exported="false"
             android:launchMode="singleInstance"
             android:screenOrientation="portrait"
-            android:taskAffinity="club.daishenghui.minguo.lock"
+            android:taskAffinity="app.minguo.calendar.lock"
             android:theme="@style/Theme.Minguo.Lock" />
 
         <service
