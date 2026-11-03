@@ -108,6 +108,11 @@ class Prefs(context: Context) {
     /** 线路：0 自动判断，1 强制中国大陆，2 强制境外 */
     var regionOverride: Int get() = int("region_override", 0); set(v) = putInt("region_override", v)
 
+    /** 高德地图 Web 服务（App 里填写，优先于 Config.kt）；空 = 用 Config.kt 里的 */
+    var amapKey: String get() = str("amap_key") ?: ""; set(v) = putStr("amap_key", v)
+    var amapSecret: String get() = str("amap_secret") ?: ""; set(v) = putStr("amap_secret", v)
+    var amapUrl: String get() = str("amap_url") ?: ""; set(v) = putStr("amap_url", v)
+
     var lat: Double
         get() = str("weather_lat")?.toDoubleOrNull() ?: Double.NaN
         set(v) = putStr("weather_lat", v.toString())

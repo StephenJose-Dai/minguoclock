@@ -15,9 +15,11 @@ import java.time.ZoneId
 /**
  * 下一个闹钟（只认时钟应用里设的闹钟）。
  *
- * 0. 先尝试直接读时钟应用的闹钟列表（小米/部分旧版原生时钟开放了 content://com.android.deskclock/alarm）：
- *    能读到就最准——按每个已开启闹钟的时间、重复日算出最近一次，完全不受其它应用提醒的干扰。
- *    读不到（系统不开放）才用下面的办法。
+ * 判断顺序：
+ * A. 系统“最早的提醒”是时钟应用设的 → 直接用（系统自己算的，最准，已考虑重复日、跳过、贪睡）；
+ * B. 被其它应用的提醒挡住时 → 读时钟应用的闹钟列表（小米等开放了 content://com.android.deskclock/alarm）补位，
+ *    只取“已开启”的闹钟；列表里没有“是否开启”这一栏就不采信（否则会把关着的预设闹钟算进去）；
+ * C. 列表读不到 → 用下面记录的办法。
  *
  * 系统只提供 AlarmManager.nextAlarmClock = “所有应用里最早的那一个提醒”，任何应用都能写
  * （日历、待办、健康、某些 App 的定时任务）。所以：
@@ -103,8 +105,8 @@ object Alarms {
         "content://com.android.deskclock/alarms",
     )
 
-    /** 读取结果：available = 能读到列表；next = 最近一次响铃（没有开启的闹钟为 null）；count = 已开启数量 */
-    private data class ProviderResult(val available: Boolean, val next: Long?, val count: Int)
+    /** 读取结果：available = 能读到列表且有“是否开启”栏；next = 最近一次响铃；count = 已开启数量；rows = 诊断用的原始行 */
+    private data class ProviderResult(val available: Boolean, val next: Long?, val count: Int, val rows: List<String> = emptyList(), val columns: String = "")
 
     /**
      * 重复日 daysofweek 是位掩码：bit0 = 周一 … bit6 = 周日；0 = 只响一次。
@@ -128,20 +130,29 @@ object Alarms {
         for (u in CLOCK_PROVIDERS) {
             val c = runCatching { context.contentResolver.query(Uri.parse(u), null, null, null, null) }.getOrNull() ?: continue
             c.use { cur ->
-                val hi = cur.getColumnIndex("hour")
-                val mi = cur.getColumnIndex("minutes")
-                if (hi < 0 || mi < 0) return@use
-                val di = cur.getColumnIndex("daysofweek")
-                val ei = cur.getColumnIndex("enabled")
+                fun col(vararg names: String) = names.map { cur.getColumnIndex(it) }.firstOrNull { it >= 0 } ?: -1
+                val hi = col("hour")
+                val mi = col("minutes", "minute")
+                val di = col("daysofweek", "days_of_week", "daysOfWeek")
+                val ei = col("enabled", "enable", "isEnabled", "is_enabled")
+                val columns = cur.columnNames.joinToString(",")
+                // 没有时间或“是否开启”栏，就不采信
+                if (hi < 0 || mi < 0 || ei < 0) return ProviderResult(false, null, 0, emptyList(), columns)
                 var best: LocalDateTime? = null
                 var count = 0
+                val raw = ArrayList<String>()
                 while (cur.moveToNext()) {
-                    if (ei >= 0 && cur.getInt(ei) == 0) continue
+                    val h = cur.getInt(hi)
+                    val m = cur.getInt(mi)
+                    val days = if (di >= 0) cur.getInt(di) else 0
+                    val on = cur.getInt(ei) != 0
+                    if (raw.size < 8) raw.add("%02d:%02d %s %s".format(h, m, if (on) "开" else "关", if (days == 0) "单次" else "重复$days"))
+                    if (!on) continue
                     count++
-                    val at = nextOccurrence(cur.getInt(hi), cur.getInt(mi), if (di >= 0) cur.getInt(di) else 0, now)
+                    val at = nextOccurrence(h, m, days, now)
                     if (best == null || at.isBefore(best)) best = at
                 }
-                return ProviderResult(true, best?.atZone(ZoneId.systemDefault())?.toInstant()?.toEpochMilli(), count)
+                return ProviderResult(true, best?.atZone(ZoneId.systemDefault())?.toInstant()?.toEpochMilli(), count, raw, columns)
             }
         }
         return ProviderResult(false, null, 0)
@@ -149,20 +160,25 @@ object Alarms {
 
     /** 下一个闹钟的响铃时间；没有设闹钟则 null。每次调用都会顺便更新记录 */
     fun next(context: Context): Long? {
-        // 0. 能直接读时钟应用的闹钟列表就以它为准
-        val app = fromClockApp(context)
-        if (app.available) return app.next
         val p = Prefs(context)
         val now = System.currentTimeMillis()
         val info = systemInfo(context)
         if (info == null) {
-            // 系统里一个提醒都没有
+            // 系统里一个提醒都没有 = 没有任何闹钟
             p.clockAlarmAt = 0L
             return null
         }
+        // A. 系统最早的提醒就是时钟闹钟：最准
         if (classify(context, info) == Kind.CLOCK) {
             p.clockAlarmAt = info.triggerTime
             return info.triggerTime
+        }
+        // B. 被其它应用的提醒挡住：用时钟应用的闹钟列表补位（只取已开启、且不早于系统最早提醒的）
+        val app = fromClockApp(context)
+        if (app.available) {
+            val n = app.next?.takeIf { it >= info.triggerTime - 60_000 }
+            p.clockAlarmAt = n ?: 0L
+            return n
         }
         // 最早的是别的应用的提醒：用之前记下的时钟闹钟（被挡在后面）
         val saved = p.clockAlarmAt
@@ -192,9 +208,12 @@ object Alarms {
         val shown = next(context)
         val app = fromClockApp(context)
         val appLine = if (app.available) {
-            tr("可读取，已开启 ${app.count} 个", "可讀取，已開啟 ${app.count} 個", "readable, ${app.count} enabled")
+            tr("可读取，已开启 ${app.count} 个", "可讀取，已開啟 ${app.count} 個", "readable, ${app.count} enabled") +
+                (if (app.rows.isNotEmpty()) "\n　" + app.rows.joinToString("；") else "")
+        } else if (app.columns.isNotEmpty()) {
+            tr("读到了但没有“是否开启”栏，不采信", "讀到了但沒有「是否開啟」欄，不採信", "readable but no enabled column") + "\n　" + app.columns
         } else {
-            tr("系统不开放，改用系统提醒判断", "系統不開放，改用系統提醒判斷", "not available, using system alarm")
+            tr("系统不开放", "系統不開放", "not available")
         }
         return tr("时钟应用闹钟列表：", "時鐘應用程式鬧鐘列表：", "Clock app alarms: ") + appLine + "\n" +
             tr("系统最早的提醒：", "系統最早的提醒：", "System earliest: ") + (info?.let { fmt(it.triggerTime) } ?: "—") +

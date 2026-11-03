@@ -321,7 +321,7 @@ object Weather {
             val hasLoc = !p.lat.isNaN() && !p.lon.isNaN()
             val lang = L.of(context)
             if (hasLoc && p.placeCountry.isBlank()) {
-                Geo.reverse(p.lat, p.lon)?.let { savePlace(context, it) }
+                Geo.reverse(context, p.lat, p.lon)?.let { savePlace(context, it) }
             }
             val tencent = if (hasLoc && p.placeCountry == "CN" && p.placeProvince.isNotBlank()) {
                 runCatching { fetchTencent(p.placeProvince, p.placeCity, p.placeDistrict, p.cityName, lang) }
@@ -373,7 +373,7 @@ object Weather {
         if (now - passiveRefreshAt < 5 * 60 * 1000L) return
         passiveRefreshAt = now
         ioScope.async {
-            val place = bounded(8_000) { Geo.reverse(loc.latitude, loc.longitude) }
+            val place = bounded(8_000) { Geo.reverse(context, loc.latitude, loc.longitude) }
                 ?: bounded(6_000) { geocoderPlaceBlocking(context, loc) }
             setLocation(context, place?.label ?: p.cityName, loc.latitude, loc.longitude, place)
             p.locatedAt = System.currentTimeMillis()
@@ -676,13 +676,26 @@ object Weather {
                 result
             }
         }
-        val found = loc ?: lastKnown() ?: return null
+        val found = loc ?: lastKnown() ?: run {
+            // 手机定位完全拿不到（室内没有 GPS、系统网络定位不可用）：按网络 IP 大致定位到城市
+            val ip = bounded(8_000) { Geo.ipFallback(context) } ?: return null
+            Prefs(context).apply {
+                locSource = "ip"
+                locAccuracy = -1
+            }
+            val l = Location("ip").apply {
+                latitude = ip.lat
+                longitude = ip.lon
+                time = System.currentTimeMillis()
+            }
+            return Located(ip.place.label, l, ip.place)
+        }
         Prefs(context).apply {
             locSource = found.provider ?: ""
             locAccuracy = if (found.hasAccuracy()) found.accuracy.toInt() else -1
         }
         // 地名反查放到独立线程，最多等 8 秒（网络卡住也不会让“定位中”一直转）
-        val place = bounded(8_000) { Geo.reverse(found.latitude, found.longitude) }
+        val place = bounded(8_000) { Geo.reverse(context, found.latitude, found.longitude) }
             ?: bounded(6_000) { geocoderPlaceBlocking(context, found) }
         return Located(place?.label ?: "", found, place)
     }

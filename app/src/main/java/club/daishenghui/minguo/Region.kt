@@ -91,7 +91,7 @@ object Region {
         val p = Prefs(context)
         var country = p.placeCountry
         if (country.isBlank() && !p.lat.isNaN() && !p.lon.isNaN()) {
-            country = Geo.reverse(p.lat, p.lon)?.country.orEmpty()
+            country = Geo.reverse(context, p.lat, p.lon)?.country.orEmpty()
         }
         if (country.isBlank()) return null
         lastSource = tr("定位", "定位", "location") + " $country"

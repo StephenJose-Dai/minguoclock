@@ -968,6 +968,8 @@ private fun WeatherPage() {
         }
     }
 
+    if (enabled) AmapSection { city = prefs.cityName }
+
     if (showSearch) {
         CitySearchDialog(lang, onDismiss = { showSearch = false }) { c ->
             showSearch = false
@@ -977,6 +979,96 @@ private fun WeatherPage() {
             city = c.name
             refreshNow()
         }
+    }
+}
+
+/**
+ * 高德地图（可选）：填了 Key 后，定位坐标用高德换成“省 市 区”（准到街道），没填用内置离线表。
+ * Key 只存在手机上；也可以写在 Config.kt 的 AMAP_KEY 里（这里填的优先）。
+ */
+@Composable
+private fun AmapSection(onPlaceChanged: () -> Unit) {
+    val ctx = LocalContext.current
+    val prefs = remember { Prefs(ctx) }
+    val scope = rememberCoroutineScope()
+    var key by remember { mutableStateOf(prefs.amapKey) }
+    var secret by remember { mutableStateOf(prefs.amapSecret) }
+    var url by remember { mutableStateOf(prefs.amapUrl.ifBlank { AppConfig.AMAP_REGEO_URL }) }
+    var result by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val fieldColors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent, cursorColor = Accent)
+
+    Section(tr("高德地图（可选）", "高德地圖（可選）", "AMap (optional)")) {
+        Paragraph(
+            tr(
+                "填了 Key，定位后用高德把坐标换成“省 市 区”，准到街道；不填就用内置的离线区县表。天气数据不受影响。\n申请：高德开放平台 → 控制台 → 应用管理 → 创建应用 → 添加 Key，服务平台选「Web服务」。",
+                "填了 Key，定位後用高德把座標換成「省 市 區」，準到街道；不填就用內建的離線區縣表。天氣資料不受影響。\n申請：高德開放平台 → 控制台 → 應用管理 → 建立應用 → 新增 Key，服務平台選「Web服務」。",
+                "With a key, AMap turns your coordinates into province/city/district (street level). Without one, the built-in offline table is used. Get a \"Web Service\" key from the AMap open platform console.",
+            ),
+        )
+        if (prefs.amapKey.isBlank() && AppConfig.AMAP_KEY.isNotBlank()) {
+            Text(tr("当前使用 Config.kt 里的 Key", "目前使用 Config.kt 裡的 Key", "Using the key from Config.kt"), color = Good, fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = key, onValueChange = { key = it.trim() }, singleLine = true,
+            label = { Text("Key") }, colors = fieldColors, modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = secret, onValueChange = { secret = it.trim() }, singleLine = true,
+            label = { Text(tr("安全密钥（私钥，没开数字签名就留空）", "安全密鑰（私鑰，沒開數位簽章就留空）", "Secret (only if signing is on)")) },
+            colors = fieldColors, modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = url, onValueChange = { url = it.trim() }, singleLine = true,
+            label = { Text(tr("接口地址（一般不用改）", "介面位址（一般不用改）", "API URL (usually unchanged)")) },
+            colors = fieldColors, modifier = Modifier.fillMaxWidth(),
+        )
+        Row {
+            TextButton(onClick = {
+                prefs.amapKey = key
+                prefs.amapSecret = secret
+                prefs.amapUrl = if (url == AppConfig.AMAP_REGEO_URL) "" else url
+                toast(ctx, tr("已保存", "已儲存", "Saved"))
+                // 有位置的话，马上用新设置重新反查一次地名
+                if (!prefs.lat.isNaN()) {
+                    scope.launch {
+                        busy = true
+                        withContext(Dispatchers.IO) {
+                            Geo.reverse(ctx, prefs.lat, prefs.lon)?.let { pl ->
+                                Weather.setLocation(ctx, pl.label, prefs.lat, prefs.lon, pl)
+                            }
+                        }
+                        busy = false
+                        onPlaceChanged()
+                        Weather.refresh(ctx, inForeground = true)
+                    }
+                }
+            }) { Text(tr("保存", "儲存", "Save"), color = Accent) }
+            TextButton(onClick = {
+                prefs.amapKey = key
+                prefs.amapSecret = secret
+                prefs.amapUrl = if (url == AppConfig.AMAP_REGEO_URL) "" else url
+                if (prefs.lat.isNaN()) {
+                    result = tr("还没有位置，先点上面的“定位”", "還沒有位置，先點上面的「定位」", "No location yet — tap Locate first")
+                    return@TextButton
+                }
+                scope.launch {
+                    busy = true
+                    val r = withContext(Dispatchers.IO) { Geo.amap(ctx, prefs.lat, prefs.lon) }
+                    busy = false
+                    result = if (r.error == null) {
+                        tr("✓ 成功：", "✓ 成功：", "✓ OK: ") + r.address
+                    } else {
+                        tr("✗ 失败：", "✗ 失敗：", "✗ Failed: ") + r.error
+                    }
+                }
+            }) { Text(tr("测试", "測試", "Test"), color = Accent) }
+        }
+        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Accent)
+        result?.let { Text(it, color = if (it.startsWith("✓")) Good else Danger, fontSize = 13.sp) }
     }
 }
 
@@ -1286,6 +1378,13 @@ private fun RunStatusSection(tick: Int) {
                     else -> src
                 }
                 append(tr("　方式：", "　方式：", "  Source: ")).append(name)
+                val geoSrc = when (Geo.lastSource) {
+                    "amap" -> tr("高德", "高德", "AMap")
+                    "offline" -> tr("离线区县表", "離線區縣表", "offline table")
+                    "bigdatacloud" -> "BigDataCloud"
+                    else -> ""
+                }
+                if (geoSrc.isNotEmpty()) append(tr("；地名来自", "；地名來自", "; place from ")).append(geoSrc)
                 if (p.locAccuracy >= 0) append(tr("，精度约 ", "，精度約 ", ", about ")).append(p.locAccuracy).append(tr(" 米", " 公尺", " m"))
                 append('\n')
             }
