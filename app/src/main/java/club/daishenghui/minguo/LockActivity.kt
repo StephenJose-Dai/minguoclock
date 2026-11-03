@@ -53,6 +53,11 @@ class LockActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
         ui = uiFrom(intent)
+        // 关闭时不做任何动画（Android 14+ 要提前声明）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
+            overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
+        }
         L.refresh(this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -142,11 +147,16 @@ class LockActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * 立刻关闭锁屏页。以前用淡出动画，系统解锁后锁屏页还要淡出几百毫秒，看起来像“先闪一下 App 背景再到桌面”。
+     * 现在：去掉窗口动画、无动画关闭，解锁后直接看到桌面。
+     */
     private fun finishQuietly() {
         if (isFinishing) return
+        window.setWindowAnimations(0)
         finish()
         @Suppress("DEPRECATION")
-        overridePendingTransition(0, android.R.anim.fade_out)
+        overridePendingTransition(0, 0)
     }
 
     companion object {

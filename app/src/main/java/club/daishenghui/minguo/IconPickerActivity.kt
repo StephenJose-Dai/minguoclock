@@ -96,28 +96,38 @@ private fun IconPage(onDone: () -> Unit) {
     var selected by remember { mutableIntStateOf(IconSwitcher.current(ctx)) }
 
     Text(tr("更换图标", "更換圖示", "Change icon"), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-    Spacer(Modifier.height(16.dp))
-    IconSwitcher.styles.chunked(3).forEach { row ->
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            row.forEach { s ->
-                val on = s.index == selected
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(PickerCard)
-                        .border(2.dp, if (on) Gold else Color.Transparent, RoundedCornerShape(16.dp))
-                        .clickable { selected = s.index }
-                        .padding(vertical = 14.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Image(painterResource(s.preview), null, Modifier.size(64.dp))
-                    Spacer(Modifier.height(8.dp))
-                    Text(tr(s.zh, s.hant, s.en), color = if (on) Gold else Color.White, fontSize = 13.sp)
+    listOf(
+        0 to tr("通用", "通用", "General"),
+        1 to tr("简体", "簡體", "Simplified"),
+        2 to tr("繁體（台灣）", "繁體（台灣）", "Traditional (Taiwan)"),
+    ).forEach { (group, title) ->
+        Spacer(Modifier.height(16.dp))
+        Text(title, color = Sub, fontSize = 13.sp)
+        Spacer(Modifier.height(8.dp))
+        IconSwitcher.styles.filter { it.group == group }.chunked(3).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                row.forEach { s ->
+                    val on = s.index == selected
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(PickerCard)
+                            .border(2.dp, if (on) Gold else Color.Transparent, RoundedCornerShape(16.dp))
+                            .clickable { selected = s.index }
+                            .padding(vertical = 14.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Image(painterResource(s.preview), null, Modifier.size(64.dp))
+                        Spacer(Modifier.height(8.dp))
+                        Text(tr(s.zh, s.hant, s.en), color = if (on) Gold else Color.White, fontSize = 13.sp)
+                    }
                 }
+                // 一行不满 3 个时补空位，保持大小一致
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
             }
+            Spacer(Modifier.height(12.dp))
         }
-        Spacer(Modifier.height(12.dp))
     }
     Spacer(Modifier.height(4.dp))
     Button(
@@ -140,23 +150,28 @@ private fun NamePage(onDone: () -> Unit) {
 
     Text(tr("修改应用名称", "修改應用程式名稱", "Rename app"), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
     Spacer(Modifier.height(16.dp))
-    IconSwitcher.names.forEach { n ->
-        val on = n.index == selected
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(bottom = 12.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(PickerCard)
-                .border(2.dp, if (on) Gold else Color.Transparent, RoundedCornerShape(16.dp))
-                .clickable { selected = n.index }
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Image(icon, null, Modifier.size(44.dp).clip(RoundedCornerShape(11.dp)))
-            Spacer(Modifier.size(14.dp))
-            Text(tr(n.hans, n.hant, n.en), color = if (on) Gold else Color.White, fontSize = 17.sp)
+    listOf(1 to tr("简体", "簡體", "Simplified"), 2 to tr("繁體（台灣）", "繁體（台灣）", "Traditional (Taiwan)")).forEach { (group, title) ->
+        Text(title, color = Sub, fontSize = 13.sp)
+        Spacer(Modifier.height(8.dp))
+        IconSwitcher.names.filter { it.group == group }.forEach { n ->
+            val on = n.index == selected
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(PickerCard)
+                    .border(2.dp, if (on) Gold else Color.Transparent, RoundedCornerShape(16.dp))
+                    .clickable { selected = n.index }
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Image(icon, null, Modifier.size(44.dp).clip(RoundedCornerShape(11.dp)))
+                Spacer(Modifier.size(14.dp))
+                Text(n.text, color = if (on) Gold else Color.White, fontSize = 17.sp)
+            }
         }
+        Spacer(Modifier.height(8.dp))
     }
     Spacer(Modifier.height(4.dp))
     Button(

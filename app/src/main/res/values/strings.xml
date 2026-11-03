@@ -4,7 +4,11 @@
     <string name="widget_name">民国纪年</string>
     <string name="widget_desc">时间 + 民国日期 + 农历 + 天气 + 名言</string>
 
-    <string name="launcher_name_0">民国纪年</string>
-    <string name="launcher_name_1">民国时钟</string>
-    <string name="launcher_name_2">民国数位时钟表</string>
+    <!-- 桌面名称：固定文字，用户在“修改应用名称”里选简体或繁体 -->
+    <string name="launcher_name_0" translatable="false">民国纪年</string>
+    <string name="launcher_name_1" translatable="false">民国时钟</string>
+    <string name="launcher_name_2" translatable="false">民国数位时钟表</string>
+    <string name="launcher_name_3" translatable="false">民國紀年</string>
+    <string name="launcher_name_4" translatable="false">民國時鐘</string>
+    <string name="launcher_name_5" translatable="false">民國數位時鐘錶</string>
 </resources>

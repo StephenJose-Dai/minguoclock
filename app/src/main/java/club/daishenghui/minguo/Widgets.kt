@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
@@ -77,7 +78,13 @@ object Widgets {
         if (ids.isNotEmpty()) {
             // 每个小组件按自己的尺寸排版（字号跟着宽高缩放）
             ids.forEach { id ->
-                runCatching { build(context, mgr.getAppWidgetOptions(id)) }.getOrNull()?.let { mgr.updateAppWidget(id, it) }
+                try {
+                    mgr.updateAppWidget(id, build(context, mgr.getAppWidgetOptions(id)))
+                } catch (e: Exception) {
+                    // 更新失败时桌面会一直留着旧样子（比如旧版的卡片底框），所以退一步只画时间和日期，保证样式更新到位
+                    Log.e("Widgets", "小组件更新失败，改用简化版", e)
+                    runCatching { mgr.updateAppWidget(id, fallback(context)) }
+                }
             }
         }
         scheduleMidnight(context)
@@ -101,6 +108,28 @@ object Widgets {
         return minOf(w / 250f, h / 180f).coerceIn(0.55f, 1.6f)
     }
 
+    /** 背景：只有选了“卡片”才有底框；其它样式明确设为全透明（不留任何底色） */
+    private fun applyBackground(rv: RemoteViews, style: Int) {
+        if (style == 2) {
+            rv.setInt(R.id.widget_root, "setBackgroundResource", R.drawable.widget_card_bg)
+        } else {
+            rv.setInt(R.id.widget_root, "setBackgroundResource", 0)
+            rv.setInt(R.id.widget_root, "setBackgroundColor", android.graphics.Color.TRANSPARENT)
+        }
+    }
+
+    /** 简化版：只有时间、日期，透明背景 */
+    private fun fallback(context: Context): RemoteViews {
+        val p = Prefs(context)
+        val rv = RemoteViews(context.packageName, R.layout.widget_clock)
+        applyBackground(rv, p.widgetStyle)
+        val today = LocalDate.now()
+        rv.setTextViewText(R.id.widget_date, RocCalendar.dateLine(today, p.style()))
+        rv.setViewVisibility(R.id.widget_weather_row, View.GONE)
+        rv.setViewVisibility(R.id.widget_quote, View.GONE)
+        return rv
+    }
+
     private fun build(context: Context, options: Bundle?): RemoteViews {
         val p = Prefs(context)
         val style = p.style()
@@ -111,7 +140,7 @@ object Widgets {
         val sub = if (dark) 0xB31E1E1E.toInt() else 0xDDFFFFFF.toInt()
         val today = LocalDate.now()
         val rv = RemoteViews(context.packageName, R.layout.widget_clock)
-        rv.setInt(R.id.widget_root, "setBackgroundResource", if (p.widgetStyle == 2) R.drawable.widget_card_bg else 0)
+        applyBackground(rv, p.widgetStyle)
         val k = scaleFor(options)
         fun size(id: Int, sp: Float) = rv.setTextViewTextSize(id, TypedValue.COMPLEX_UNIT_SP, sp * k)
         size(R.id.widget_time, 56f)

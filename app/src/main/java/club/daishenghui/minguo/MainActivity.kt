@@ -504,6 +504,7 @@ private fun LockModePage(tick: Int) {
     var mode by remember { mutableIntStateOf(prefs.lockMode) }
     var hasPin by remember { mutableStateOf(Security.hasPin(ctx)) }
     var setPin by remember { mutableStateOf(false) }
+    var setPattern by remember { mutableStateOf(false) }
     val systemSecure = remember(tick) { ctx.getSystemService(KeyguardManager::class.java).isDeviceSecure }
 
     Section(tr("锁屏", "鎖定畫面", "Lock screen")) {
@@ -522,7 +523,7 @@ private fun LockModePage(tick: Int) {
         if (mode == Prefs.MODE_REPLACE) {
             Paragraph(
                 tr(
-                    "系统锁屏改为「无」后，民国锁屏就是唯一的锁屏：亮屏、上滑解锁全程看不到系统时间；按 Home、返回都关不掉。\n代价：指纹/人脸需要系统锁屏密码，关掉后无法使用；锁屏时仍可下拉通知栏和控制中心。建议在下方设置锁屏密码。",
+                    "系统锁屏改为「无」后，民国锁屏就是唯一的锁屏：亮屏、上滑解锁全程看不到系统时间；按 Home、返回都关不掉。\n代价：指纹/人脸需要系统锁屏密码，关掉后无法使用；锁屏时仍可下拉通知栏和控制中心。关掉系统锁屏后，可以在下方设置图案或数字密码。",
                     "系統鎖定畫面改為「無」後，民國鎖定畫面就是唯一的鎖定畫面：亮屏、上滑解鎖全程看不到系統時間；按 Home、返回都關不掉。\n代價：指紋/臉部辨識需要系統密碼，關掉後無法使用；鎖定時仍可下拉通知欄和控制中心。建議在下方設定鎖定畫面密碼。",
                     "With the system lock set to None, this becomes the only lock screen: the system clock never shows and Home/Back can't dismiss it.\nTrade-off: fingerprint/face need a system PIN, so they won't work; the notification shade can still be pulled down. Set a PIN below.",
                 ),
@@ -551,19 +552,45 @@ private fun LockModePage(tick: Int) {
     }
 
     if (mode == Prefs.MODE_REPLACE) {
-        Section(tr("锁屏密码", "鎖定畫面密碼", "PIN")) {
-            Text(
-                if (hasPin) tr("已设置（${prefs.pinLength} 位数字）", "已設定（${prefs.pinLength} 位數字）", "Set (${prefs.pinLength} digits)") else tr("未设置：上滑直接解锁", "未設定：上滑直接解鎖", "Not set: swipe unlocks directly"),
-                color = if (hasPin) Good else SubText,
-                fontSize = 14.sp,
-            )
-            Row {
-                TextButton(onClick = { setPin = true }) { Text(if (hasPin) tr("修改密码", "修改密碼", "Change PIN") else tr("设置密码", "設定密碼", "Set PIN"), color = Accent) }
-                if (hasPin) {
-                    TextButton(onClick = {
-                        Security.clearPin(ctx)
-                        hasPin = false
-                    }) { Text(tr("清除密码", "清除密碼", "Remove PIN"), color = Danger) }
+        Section(tr("锁屏密码", "鎖定畫面密碼", "Lock password")) {
+            if (systemSecure) {
+                // 系统锁屏还开着：不允许在 App 里设密码，否则会出现两层锁屏
+                StatusLine(
+                    ok = false,
+                    text = tr("请先关闭系统锁屏，才能在这里设置密码", "請先關閉系統鎖定畫面，才能在這裡設定密碼", "Turn off the system lock first to set a password here"),
+                )
+                Paragraph(
+                    tr(
+                        "到系统设置 → 锁屏 → 锁屏方式，改为「无」，回到这里就可以设置图案或数字密码。",
+                        "到系統設定 → 鎖定畫面 → 螢幕鎖定方式，改為「無」，回到這裡就可以設定圖案或數字密碼。",
+                        "In system settings, set the screen lock to None, then come back to set a pattern or PIN.",
+                    ),
+                )
+                TextButton(onClick = { ctx.safeStart(Intent(Settings.ACTION_SECURITY_SETTINGS)) }) {
+                    Text(tr("打开系统锁屏设置", "開啟系統鎖定畫面設定", "Open system lock settings"), color = Accent)
+                }
+            } else {
+                val isPattern = prefs.pinType == Security.TYPE_PATTERN
+                Text(
+                    when {
+                        !hasPin -> tr("未设置：上滑直接解锁", "未設定：上滑直接解鎖", "Not set: swipe unlocks directly")
+                        isPattern -> tr("已设置：图案", "已設定：圖案", "Set: pattern")
+                        else -> tr("已设置：${prefs.pinLength} 位数字密码", "已設定：${prefs.pinLength} 位數字密碼", "Set: ${prefs.pinLength}-digit PIN")
+                    },
+                    color = if (hasPin) Good else SubText,
+                    fontSize = 14.sp,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(tr("选择密码类型", "選擇密碼類型", "Choose a type"), color = SubText, fontSize = 13.sp)
+                Row {
+                    TextButton(onClick = { setPin = true }) { Text(tr("数字密码", "數字密碼", "PIN"), color = Accent) }
+                    TextButton(onClick = { setPattern = true }) { Text(tr("图案", "圖案", "Pattern"), color = Accent) }
+                    if (hasPin) {
+                        TextButton(onClick = {
+                            Security.clearPin(ctx)
+                            hasPin = false
+                        }) { Text(tr("清除密码", "清除密碼", "Remove"), color = Danger) }
+                    }
                 }
             }
         }
@@ -571,12 +598,63 @@ private fun LockModePage(tick: Int) {
 
     if (setPin) {
         PinSetupDialog(onDismiss = { setPin = false }) { pin ->
-            Security.setPin(ctx, pin)
+            Security.setPin(ctx, pin, Security.TYPE_PIN)
             hasPin = true
             setPin = false
-            toast(ctx, tr("密码已设置", "密碼已設定", "PIN set"))
+            toast(ctx, tr("数字密码已设置", "數字密碼已設定", "PIN set"))
         }
     }
+    if (setPattern) {
+        PatternSetupDialog(onDismiss = { setPattern = false }) { key ->
+            Security.setPin(ctx, key, Security.TYPE_PATTERN)
+            hasPin = true
+            setPattern = false
+            toast(ctx, tr("图案已设置", "圖案已設定", "Pattern set"))
+        }
+    }
+}
+
+/** 设置图案：画两次一致才保存 */
+@Composable
+private fun PatternSetupDialog(onDismiss: () -> Unit, onDone: (String) -> Unit) {
+    var first by remember { mutableStateOf<String?>(null) }
+    var hint by remember { mutableStateOf(tr("绘制解锁图案（至少连接 $PATTERN_MIN 个点）", "繪製解鎖圖案（至少連接 $PATTERN_MIN 個點）", "Draw a pattern (at least $PATTERN_MIN dots)")) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        title = { Text(tr("设置图案", "設定圖案", "Set pattern"), color = Color.White) },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                Text(hint, color = SubText, fontSize = 13.sp)
+                Spacer(Modifier.height(12.dp))
+                PatternPad(size = 240.dp) { nodes ->
+                    val key = nodes.patternKey()
+                    when {
+                        nodes.size < PATTERN_MIN -> {
+                            hint = tr("至少连接 $PATTERN_MIN 个点，请重画", "至少連接 $PATTERN_MIN 個點，請重畫", "Connect at least $PATTERN_MIN dots")
+                            false
+                        }
+                        first == null -> {
+                            first = key
+                            hint = tr("再画一次确认", "再畫一次確認", "Draw again to confirm")
+                            true
+                        }
+                        first == key -> {
+                            onDone(key)
+                            true
+                        }
+                        else -> {
+                            first = null
+                            hint = tr("两次不一致，请重新绘制", "兩次不一致，請重新繪製", "Didn't match — start over")
+                            false
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("取消", "取消", "Cancel"), color = SubText) } },
+    )
 }
 
 @Composable
@@ -1045,6 +1123,8 @@ private fun WidgetsPage() {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     var style by remember { mutableIntStateOf(prefs.widgetStyle.coerceIn(0, 2)) }
+    // 进入本页时刷新一次桌面小组件，确保显示的是当前样式
+    LaunchedEffect(Unit) { Widgets.updateAll(ctx) }
 
     Section(tr("民国纪年小组件", "民國紀年小工具", "ROC Calendar widget")) {
         Paragraph(
@@ -1146,6 +1226,7 @@ private fun PermissionsPage(tick: Int) {
             )
         }
     }
+    RunStatusSection(t)
     Section(tr("关于进程守护", "關於程序守護", "About keep-alive")) {
         Paragraph(
             tr(
@@ -1154,6 +1235,61 @@ private fun PermissionsPage(tick: Int) {
                 "The app is hidden from Recents and restarts itself after crashes. A Force stop freezes it until you open the app again or reboot.",
             ),
         )
+    }
+}
+
+/**
+ * 运行状态：用来确认名言、必应壁纸、天气、定位有没有自动更新，以及闹钟为什么显示 / 不显示。
+ * 每次回到这个页面都会刷新。
+ */
+@Composable
+private fun RunStatusSection(tick: Int) {
+    val ctx = LocalContext.current
+    val p = remember(tick) { Prefs(ctx) }
+    val weather by Weather.state.collectAsState()
+    var refresh by remember { mutableIntStateOf(0) }
+    val now = System.currentTimeMillis()
+    fun fmt(ms: Long): String {
+        if (ms <= 0L) return tr("还没有", "還沒有", "Never")
+        val t = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDateTime()
+        val mins = (now - ms) / 60_000
+        val ago = when {
+            mins < 1 -> tr("刚刚", "剛剛", "just now")
+            mins < 60 -> tr("$mins 分钟前", "$mins 分鐘前", "$mins min ago")
+            mins < 1440 -> tr("${mins / 60} 小时前", "${mins / 60} 小時前", "${mins / 60} h ago")
+            else -> tr("${mins / 1440} 天前", "${mins / 1440} 天前", "${mins / 1440} d ago")
+        }
+        return "%02d-%02d %02d:%02d（%s）".format(t.monthValue, t.dayOfMonth, t.hour, t.minute, ago)
+    }
+    val lines = remember(tick, refresh, weather) {
+        buildString {
+            append(tr("名言上次更换：", "名言上次更換：", "Quote changed: ")).append(fmt(p.quoteChangedAt)).append('\n')
+            append(tr("　规则：每 30 分钟换一句，在亮屏或小组件刷新时生效", "　規則：每 30 分鐘換一句，在亮屏或小工具重新整理時生效", "  Rule: every 30 min, applied on screen-on or widget refresh")).append("\n\n")
+            if (p.wallpaperMode == Wallpaper.MODE_BING) {
+                append(tr("必应壁纸日期：", "Bing 桌布日期：", "Bing wallpaper date: ")).append(p.bingDate.ifBlank { "—" }).append('\n')
+                append(tr("必应上次下载：", "Bing 上次下載：", "Bing downloaded: ")).append(fmt(p.bingFetchedAt)).append('\n')
+                append(tr("　规则：每天一张，日期变了就会下载新图（每 6 小时检查一次，亮屏时也会检查）", "　規則：每天一張，日期變了就會下載新圖（每 6 小時檢查一次，亮屏時也會檢查）", "  Rule: one per day; checked every 6 h and on screen-on")).append("\n\n")
+            } else {
+                append(tr("必应壁纸：未使用（壁纸页选“必应每日”后生效）", "Bing 桌布：未使用（桌布頁選「Bing 每日」後生效）", "Bing wallpaper: not in use")).append("\n\n")
+            }
+            append(tr("天气上次更新：", "天氣上次更新：", "Weather updated: ")).append(fmt(weather?.fetchedAt ?: 0L)).append('\n')
+            append(tr("上次定位：", "上次定位：", "Last located: ")).append(fmt(p.locatedAt)).append('\n')
+            append(tr("锁屏时可定位：", "鎖定時可定位：", "Can locate when locked: "))
+                .append(if (LockService.locationActive || Weather.hasBackgroundLocation(ctx)) tr("是", "是", "Yes") else tr("否（打开一次 App 后生效）", "否（開啟一次 App 後生效）", "No (open the app once)"))
+                .append("\n\n")
+            append(tr("小组件样式：", "小工具樣式：", "Widget style: ")).append(
+                when (p.widgetStyle) {
+                    1 -> tr("深色字（透明）", "深色字（透明）", "Dark (transparent)")
+                    2 -> tr("卡片（有底框）", "卡片（有底框）", "Card (with background)")
+                    else -> tr("白字（透明）", "白字（透明）", "Light (transparent)")
+                },
+            ).append("\n\n")
+            append(Alarms.diagnose(ctx))
+        }
+    }
+    Section(tr("运行状态", "執行狀態", "Status")) {
+        Text(lines, color = Color.White, fontSize = 13.sp, lineHeight = 20.sp)
+        TextButton(onClick = { refresh++ }) { Text(tr("刷新", "重新整理", "Refresh"), color = Accent) }
     }
 }
 

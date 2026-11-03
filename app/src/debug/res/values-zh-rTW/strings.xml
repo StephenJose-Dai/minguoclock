@@ -1,8 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">民國紀年 除錯版</string>
-
-    <string name="launcher_name_0">民國紀年 除錯版</string>
-    <string name="launcher_name_1">民國時鐘 除錯版</string>
-    <string name="launcher_name_2">民國數位時鐘錶 除錯版</string>
 </resources>

@@ -153,6 +153,7 @@ object Wallpaper {
             p.bingSize = sizeKey
             p.bingCopyright = img.optString("copyright")
             p.bingDate = today
+            p.bingFetchedAt = System.currentTimeMillis()
             _version.value++
             true
         } catch (e: Exception) {

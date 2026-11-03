@@ -1,8 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ROC Calendar Debug</string>
-
-    <string name="launcher_name_0">ROC Calendar Debug</string>
-    <string name="launcher_name_1">Minguo Clock Debug</string>
-    <string name="launcher_name_2">ROC Digital Clock Debug</string>
 </resources>

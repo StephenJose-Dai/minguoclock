@@ -33,6 +33,8 @@ class Prefs(context: Context) {
     var pinHash: String get() = str("pin_hash") ?: ""; set(v) = putStr("pin_hash", v)
     var pinSalt: String get() = str("pin_salt") ?: ""; set(v) = putStr("pin_salt", v)
     var pinLength: Int get() = int("pin_len", 0); set(v) = putInt("pin_len", v)
+    /** 锁屏密码类型：0 = 数字密码，1 = 图案 */
+    var pinType: Int get() = int("pin_type", 0); set(v) = putInt("pin_type", v)
 
     /** 悬浮窗锁屏当前是否处于锁定状态（服务崩溃重启后据此恢复锁屏，防止绕过） */
     var overlayLocked: Boolean get() = bool("overlay_locked", false); set(v) = sp.edit().putBoolean("overlay_locked", v).commit().let { }
@@ -59,6 +61,8 @@ class Prefs(context: Context) {
     var wallpaperDim: Int get() = int("wallpaper_dim", 20); set(v) = putInt("wallpaper_dim", v)
     var bingCopyright: String get() = str("bing_copyright") ?: ""; set(v) = putStr("bing_copyright", v)
     var bingDate: String get() = str("bing_date") ?: ""; set(v) = putStr("bing_date", v)
+    /** 必应壁纸上次下载成功的时间（“运行状态”里显示，用来确认是否自动更新） */
+    var bingFetchedAt: Long get() = long("bing_fetched_at"); set(v) = putLong("bing_fetched_at", v)
     var bingSize: String get() = str("bing_size") ?: ""; set(v) = putStr("bing_size", v)
     var showBingInfo: Boolean get() = bool("show_bing_info", true); set(v) = putBool("show_bing_info", v)
 

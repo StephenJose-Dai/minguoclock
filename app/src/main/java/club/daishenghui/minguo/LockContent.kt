@@ -229,7 +229,11 @@ fun LockContent(
     val is24 = DateFormat.is24HourFormat(ctx)
     val alarm = remember(now.minute, lang) {
         // 只显示时钟应用设的闹钟；没设闹钟时为 null，锁屏上就不显示
-        Alarms.next(ctx)?.let { RocCalendar.alarmText(it, now, is24, lang) }
+        when (val n = Alarms.next(ctx)) {
+            is Alarms.Next.At -> RocCalendar.alarmText(n.millis, now, is24, lang)
+            is Alarms.Next.Text -> n.text
+            null -> null
+        }
     }
 
     val swipe = if (interactive && !showPin) {
@@ -487,10 +491,15 @@ fun LockContent(
         }
 
         if (showPin) {
-            PinPad(lang, onCancel = { showPin = false }, onSuccess = {
+            val done = {
                 showPin = false
                 onUnlock()
-            })
+            }
+            if (Security.type(ctx) == Security.TYPE_PATTERN) {
+                PatternUnlock(lang, onCancel = { showPin = false }, onSuccess = done)
+            } else {
+                PinPad(lang, onCancel = { showPin = false }, onSuccess = done)
+            }
         }
     }
 }
@@ -835,6 +844,62 @@ private fun PinPad(lang: Lang, onCancel: () -> Unit, onSuccess: () -> Unit) {
                 PinKey("0") { press('0') }
                 PinKey(tr("删除", "刪除", "Delete", lang), small = true) { if (input.isNotEmpty()) input = input.dropLast(1) }
             }
+        }
+    }
+}
+
+/** 图案解锁：连错 5 次锁 30 秒，和数字密码一致 */
+@Composable
+private fun PatternUnlock(lang: Lang, onCancel: () -> Unit, onSuccess: () -> Unit) {
+    val ctx = LocalContext.current
+    var message by remember { mutableStateOf("") }
+    var fails by remember { mutableIntStateOf(0) }
+    var lockedUntil by remember { mutableLongStateOf(0L) }
+    var locked by remember { mutableStateOf(false) }
+
+    LaunchedEffect(lockedUntil) {
+        while (System.currentTimeMillis() < lockedUntil) {
+            locked = true
+            val left = (lockedUntil - System.currentTimeMillis()) / 1000 + 1
+            message = tr("请 $left 秒后再试", "請 $left 秒後再試", "Try again in ${left}s", lang)
+            delay(500)
+        }
+        locked = false
+        if (lockedUntil != 0L) message = ""
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xE6000000))
+            .pointerInput(Unit) { detectTapGestures { } },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.safeDrawingPadding()) {
+            Text(tr("绘制解锁图案", "繪製解鎖圖案", "Draw unlock pattern", lang), color = Color.White, fontSize = 18.sp)
+            Spacer(Modifier.height(10.dp))
+            Text(message, color = Color(0xFFFF8A80), fontSize = 13.sp, modifier = Modifier.height(20.dp))
+            Spacer(Modifier.height(16.dp))
+            PatternPad(enabled = !locked) { nodes ->
+                if (Security.check(ctx, nodes.patternKey())) {
+                    onSuccess()
+                    true
+                } else {
+                    fails++
+                    message = if (nodes.size < PATTERN_MIN) {
+                        tr("至少连接 $PATTERN_MIN 个点", "至少連接 $PATTERN_MIN 個點", "Connect at least $PATTERN_MIN dots", lang)
+                    } else {
+                        tr("图案错误", "圖案錯誤", "Wrong pattern", lang)
+                    }
+                    if (fails >= 5) {
+                        lockedUntil = System.currentTimeMillis() + 30_000
+                        fails = 0
+                    }
+                    false
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+            PinKey(tr("取消", "取消", "Cancel", lang), small = true) { onCancel() }
         }
     }
 }

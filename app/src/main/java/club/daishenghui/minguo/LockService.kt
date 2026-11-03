@@ -151,7 +151,7 @@ class LockService : Service() {
             overlay = it
         }
         o.show()
-        pendingAlarm = Alarms.next(this) ?: 0L
+        pendingAlarm = Alarms.nextMillis(this) ?: 0L
     }
 
     private fun startLockActivity() {

@@ -3,8 +3,4 @@
     <string name="app_name">民國紀年</string>
     <string name="widget_name">民國紀年</string>
     <string name="widget_desc">時間 + 民國日期 + 農曆 + 天氣 + 名言</string>
-
-    <string name="launcher_name_0">民國紀年</string>
-    <string name="launcher_name_1">民國時鐘</string>
-    <string name="launcher_name_2">民國數位時鐘錶</string>
 </resources>

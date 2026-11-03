@@ -3,8 +3,4 @@
     <string name="app_name">ROC Calendar</string>
     <string name="widget_name">ROC Calendar</string>
     <string name="widget_desc">Time, ROC date, lunar date, weather and quote</string>
-
-    <string name="launcher_name_0">ROC Calendar</string>
-    <string name="launcher_name_1">Minguo Clock</string>
-    <string name="launcher_name_2">ROC Digital Clock</string>
 </resources>

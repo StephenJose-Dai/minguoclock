@@ -2,7 +2,11 @@
 <resources>
     <string name="app_name">民国纪年 调试版</string>
 
-    <string name="launcher_name_0">民国纪年 调试版</string>
-    <string name="launcher_name_1">民国时钟 调试版</string>
-    <string name="launcher_name_2">民国数位时钟表 调试版</string>
+    <!-- 桌面名称：固定文字，用户在“修改应用名称”里选简体或繁体 -->
+    <string name="launcher_name_0" translatable="false">民国纪年 调试版</string>
+    <string name="launcher_name_1" translatable="false">民国时钟 调试版</string>
+    <string name="launcher_name_2" translatable="false">民国数位时钟表 调试版</string>
+    <string name="launcher_name_3" translatable="false">民國紀年 调试版</string>
+    <string name="launcher_name_4" translatable="false">民國時鐘 调试版</string>
+    <string name="launcher_name_5" translatable="false">民國數位時鐘錶 调试版</string>
 </resources>
