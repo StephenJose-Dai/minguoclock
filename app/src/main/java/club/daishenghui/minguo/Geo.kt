@@ -125,7 +125,7 @@ object Geo {
     /** 高德逆地理编码。lat/lon 为手机定位的 WGS-84 坐标，内部转成高德用的 GCJ-02 */
     fun amap(context: Context, lat: Double, lon: Double): AmapResult {
         val (key, secret, base) = amapConfig(context)
-        if (key.isBlank()) return AmapResult(null, "", "未填写高德 Key")
+        if (key.isBlank()) return AmapResult(null, "", tr("未填写 Key", "未填寫 Key", "No key"))
         return try {
             val (glat, glon) = wgs84ToGcj02(lat, lon)
             val params = sortedMapOf(

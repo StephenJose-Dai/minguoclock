@@ -6,8 +6,8 @@ object AppConfig {
     const val BLOG = "https://daishenghui.club"
 
     /** “关于”页的 GitHub、Telegram 地址：填了才显示，留空就不显示 */
-    const val GITHUB_URL = ""   // 例如 https://github.com/你的用户名/minguoclock
-    const val TELEGRAM_URL = "" // 例如 https://t.me/你的用户名或频道名
+    const val GITHUB_URL = "https://github.com/StephenJose-Dai/minguoclock"   // 例如 https://github.com/你的用户名/minguoclock
+    const val TELEGRAM_URL = "https://t.me/StephenJose" // 例如 https://t.me/你的用户名或频道名
 
     /** 反馈：填了邮箱就优先发邮件，否则打开反馈网页 */
     const val FEEDBACK_EMAIL = ""
@@ -22,9 +22,9 @@ object AppConfig {
     /**
      * 高德地图 Web 服务：把定位坐标换成“省 市 区 街道”（逆地理编码）。可选，不填就用内置离线区县表。
      *
-     * 两个地方都能填，App 里填的优先：
-     * 1. App 里：设置 → 天气 → 高德地图（推荐：Key 只存在手机上，不会进代码仓库）；
-     * 2. 这里：填好后重新编译，所有安装包都自带（注意：仓库公开的话 Key 会被别人看到）。
+     * 这里填的就是“公共接口”：编译进所有安装包，所有用户共用这个 Key 的调用次数，所以有频率限制
+     * （注意：仓库公开的话 Key 会被别人看到）。
+     * 用户也可以在 App 里“设置 → 天气 → 天气接口”填自己的 Key，App 里填的优先，就不受公共接口限制。
      *
      * AMAP_KEY：高德开放平台 → 应用管理 → 添加 Key，服务平台选「Web服务」
      * AMAP_SECRET：如果给这个 Key 开了「数字签名」，填它的安全密钥（私钥）；没开就留空

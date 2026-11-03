@@ -983,7 +983,7 @@ private fun WeatherPage() {
 }
 
 /**
- * 高德地图（可选）：填了 Key 后，定位坐标用高德换成“省 市 区”（准到街道），没填用内置离线表。
+ * 天气接口（高德逆地理编码）：填了 Key 后，定位坐标用高德换成“省 市 区”（准到街道），没填用内置离线表。
  * Key 只存在手机上；也可以写在 Config.kt 的 AMAP_KEY 里（这里填的优先）。
  */
 @Composable
@@ -998,17 +998,21 @@ private fun AmapSection(onPlaceChanged: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     val fieldColors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent, cursorColor = Accent)
 
-    Section(tr("高德地图（可选）", "高德地圖（可選）", "AMap (optional)")) {
+    Section(tr("天气接口", "天氣介面", "Weather API")) {
         Paragraph(
             tr(
-                "填了 Key，定位后用高德把坐标换成“省 市 区”，准到街道；不填就用内置的离线区县表。天气数据不受影响。\n申请：高德开放平台 → 控制台 → 应用管理 → 创建应用 → 添加 Key，服务平台选「Web服务」。",
-                "填了 Key，定位後用高德把座標換成「省 市 區」，準到街道；不填就用內建的離線區縣表。天氣資料不受影響。\n申請：高德開放平台 → 控制台 → 應用管理 → 建立應用 → 新增 Key，服務平台選「Web服務」。",
-                "With a key, AMap turns your coordinates into province/city/district (street level). Without one, the built-in offline table is used. Get a \"Web Service\" key from the AMap open platform console.",
+                "默认使用公共接口，频率会受到限制，天气数据可能会不准确。如果不想受到限制，可以自行申请 Key 并填入下面。",
+                "預設使用公共介面，頻率會受到限制，天氣資料可能會不準確。如果不想受到限制，可以自行申請 Key 並填入下面。",
+                "A public API is used by default. It is rate-limited, so weather data may be inaccurate. To avoid the limits, apply for your own key and enter it below.",
             ),
         )
-        if (prefs.amapKey.isBlank() && AppConfig.AMAP_KEY.isNotBlank()) {
-            Text(tr("当前使用 Config.kt 里的 Key", "目前使用 Config.kt 裡的 Key", "Using the key from Config.kt"), color = Good, fontSize = 12.sp)
+        // 当前状态：自己填了 Key / 用公共接口（Config.kt 里的 Key）/ 都没有（内置离线数据）
+        val status = when {
+            prefs.amapKey.isNotBlank() -> tr("当前使用你自己的 Key，不受公共接口频率限制", "目前使用你自己的 Key，不受公共介面頻率限制", "Using your own key")
+            AppConfig.AMAP_KEY.isNotBlank() -> tr("当前使用公共接口，频率将受到限制", "目前使用公共介面，頻率將受到限制", "Using the public API (rate-limited)")
+            else -> tr("当前未配置接口，使用内置离线数据（准到区县）", "目前未設定介面，使用內建離線資料（準到區縣）", "No API configured; using built-in offline data")
         }
+        Text(status, color = if (prefs.amapKey.isNotBlank()) Good else Warn, fontSize = 12.sp)
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = key, onValueChange = { key = it.trim() }, singleLine = true,
@@ -1017,7 +1021,7 @@ private fun AmapSection(onPlaceChanged: () -> Unit) {
         Spacer(Modifier.height(6.dp))
         OutlinedTextField(
             value = secret, onValueChange = { secret = it.trim() }, singleLine = true,
-            label = { Text(tr("安全密钥（私钥，没开数字签名就留空）", "安全密鑰（私鑰，沒開數位簽章就留空）", "Secret (only if signing is on)")) },
+            label = { Text(tr("数字签名私钥（可选，没开数字签名就留空）", "數位簽章私鑰（可選，沒開數位簽章就留空）", "Signing secret (optional)")) },
             colors = fieldColors, modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(6.dp))
@@ -1338,16 +1342,16 @@ private fun AboutPage() {
     Section(tr("作者", "作者", "Author")) {
         Text(AppConfig.AUTHOR, color = Color.White, fontSize = 15.sp)
         TextButton(onClick = { Maintenance.openUrl(ctx, AppConfig.BLOG) }) { Text(AppConfig.BLOG, color = Accent) }
-        // GitHub、Telegram：在 Config.kt 里填了地址才显示
+        // GitHub、Telegram：一直显示图标；地址在 Config.kt 的 GITHUB_URL / TELEGRAM_URL 填写，没填时显示“未设置”、点了不跳转
         listOf(
             Triple(R.drawable.ic_link_code, "GitHub", AppConfig.GITHUB_URL),
             Triple(R.drawable.ic_link_plane, "Telegram", AppConfig.TELEGRAM_URL),
-        ).filter { it.third.isNotBlank() }.forEach { (icon, name, url) ->
+        ).forEach { (icon, name, url) ->
             Row(
                 Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable { Maintenance.openUrl(ctx, url) }
+                    .clickable(enabled = url.isNotBlank()) { Maintenance.openUrl(ctx, url) }
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1355,7 +1359,11 @@ private fun AboutPage() {
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(name, color = Color.White, fontSize = 15.sp)
-                    Text(url.removePrefix("https://").removePrefix("http://"), color = SubText, fontSize = 12.sp)
+                    Text(
+                        url.removePrefix("https://").removePrefix("http://").ifBlank { tr("未设置", "未設定", "Not set") },
+                        color = SubText,
+                        fontSize = 12.sp,
+                    )
                 }
             }
         }
