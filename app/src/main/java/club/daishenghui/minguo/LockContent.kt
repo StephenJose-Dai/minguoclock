@@ -226,11 +226,8 @@ fun LockContent(
         if (requirePin && Security.hasPin(ctx)) showPin = true else onUnlock()
     }
 
-    val is24 = DateFormat.is24HourFormat(ctx)
-    val alarm = remember(now.minute, lang) {
-        // 只显示时钟应用设的闹钟；没设闹钟时为 null，锁屏上就不显示
-        Alarms.next(ctx)?.let { RocCalendar.alarmText(it, now, is24, lang) }
-    }
+    // 闹钟元素已取消（系统不开放闹钟列表，无法准确判断），锁屏上不再显示
+    val alarm: String? = null
 
     val swipe = if (interactive && !showPin) {
         Modifier.pointerInput(Unit) {
@@ -310,6 +307,7 @@ fun LockContent(
                     }
 
                     Elem.values().forEach { e ->
+                        if (e == Elem.ALARM) return@forEach // 闹钟元素已取消，编辑时也不出现
                         val st = layout.style(e)
                         val hasData = when (e) {
                             Elem.WEATHER -> prefs.weatherEnabled && weather != null

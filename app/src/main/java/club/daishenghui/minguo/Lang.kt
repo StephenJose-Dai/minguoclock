@@ -14,17 +14,19 @@ object L {
     var current by mutableStateOf(Lang.HANS)
         private set
 
-    /** setting: 0 跟随系统，1 简体，2 繁體，3 English */
+    /**
+     * setting: 0 跟随系统，1 简体，2 繁體。只支持简繁两种（以前的 3 = English 当作跟随系统）。
+     */
     fun resolve(setting: Int): Lang = when (setting) {
         1 -> Lang.HANS
         2 -> Lang.HANT
-        3 -> Lang.EN
         else -> fromSystem()
     }
 
+    /** 跟随系统：繁体地区/繁体系统用繁體，其它（包括英文等非中文系统）都用简体 */
     fun fromSystem(): Lang {
         val loc = Locale.getDefault()
-        if (loc.language != "zh") return Lang.EN
+        if (loc.language != "zh") return if (loc.country in setOf("TW", "HK", "MO")) Lang.HANT else Lang.HANS
         return when {
             loc.script == "Hant" -> Lang.HANT
             loc.script == "Hans" -> Lang.HANS

@@ -216,7 +216,7 @@ class LockService : Service() {
     private fun startLockActivity() {
         val intent = Intent(this, LockActivity::class.java).addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS,
-        )
+        ).putExtra(LockActivity.EXTRA_LAUNCH_ID, System.currentTimeMillis())
         // 保持 CPU 唤醒 3 秒（不点亮屏幕）
         runCatching {
             getSystemService(PowerManager::class.java)
@@ -225,6 +225,8 @@ class LockService : Service() {
         }
         try {
             val pi = PendingIntent.getActivity(this, 7, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            // 首选：全屏通知（来电、闹钟就是这样在熄屏时立刻弹出界面的，不受“5 秒规则”限制）
+            postLaunchNotification(pi)
             val options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 // Android 14+：发送方要明确允许后台启动
                 android.app.ActivityOptions.makeBasic()
@@ -374,8 +376,44 @@ class LockService : Service() {
         }
     }
 
+    /**
+     * 用全屏通知拉起锁屏页：熄屏时系统会立刻打开它（不响铃、不振动，锁屏页出来后马上收起）。
+     * Android 10 以下不需要；Android 14+ 用户关了“全屏通知”权限时跳过，靠 PendingIntent 兜底。
+     */
+    private fun postLaunchNotification(pi: PendingIntent) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        runCatching {
+            val nm = getSystemService(NotificationManager::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && !nm.canUseFullScreenIntent()) return
+            nm.createNotificationChannel(
+                NotificationChannel(LAUNCH_CHANNEL_ID, tr("锁屏启动", "鎖定畫面啟動", "Lock screen launch"), NotificationManager.IMPORTANCE_HIGH).apply {
+                    setSound(null, null)
+                    enableVibration(false)
+                    setShowBadge(false)
+                    description = tr("熄屏时立刻显示民国锁屏，会自动收起", "熄屏時立刻顯示民國鎖定畫面，會自動收起", "Shows the lock screen instantly; dismissed automatically")
+                },
+            )
+            val n = Notification.Builder(this, LAUNCH_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_stat_clock)
+                .setContentTitle(tr("民国锁屏", "民國鎖定畫面", "ROC lock screen"))
+                .setCategory(Notification.CATEGORY_ALARM)
+                .setFullScreenIntent(pi, true)
+                .setAutoCancel(true)
+                .setTimeoutAfter(10_000)
+                .build()
+            nm.notify(LAUNCH_NOTIFICATION_ID, n)
+        }.onFailure { Log.w(TAG, "全屏通知拉起失败", it) }
+    }
+
     companion object {
         private const val TAG = "LockService"
+        private const val LAUNCH_CHANNEL_ID = "lock_launch"
+        private const val LAUNCH_NOTIFICATION_ID = 77
+
+        /** 锁屏页出来后收起拉起它的全屏通知 */
+        fun cancelLaunchNotification(context: Context) {
+            runCatching { context.getSystemService(NotificationManager::class.java).cancel(LAUNCH_NOTIFICATION_ID) }
+        }
         private const val OLD_CHANNEL_ID = "lock_service"
         private const val CHANNEL_ID = "roc_date"
         private const val NOTIFICATION_ID = 1

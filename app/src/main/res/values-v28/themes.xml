@@ -7,9 +7,14 @@
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 
+    <!-- 锁屏页：
+         - 不要任何进出动画（以前的淡出动画会让解锁后锁屏页还停留几百毫秒）；
+         - 窗口可透明（windowIsTranslucent）：平时有黑色底和锁屏内容，解锁时把自己变透明，后面的桌面立刻露出来。 -->
     <style name="Theme.Minguo.Lock">
         <item name="android:windowBackground">@android:color/black</item>
-        <item name="android:windowAnimationStyle">@android:style/Animation.Translucent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowDisablePreview">true</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 </resources>

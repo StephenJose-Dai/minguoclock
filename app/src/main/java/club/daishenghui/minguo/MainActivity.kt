@@ -271,7 +271,7 @@ private fun TopBar(page: Page, onBack: () -> Unit, onSettings: () -> Unit) {
 @Composable
 private fun Footer() {
     Text(
-        "© 2026 ${AppConfig.AUTHOR}",
+        "© ${LocalDate.now().year} ${AppConfig.AUTHOR}", // 按当前年份显示，跨年自动变
         color = SubText.copy(alpha = 0.6f),
         fontSize = 12.sp,
         textAlign = TextAlign.Center,
@@ -833,7 +833,7 @@ private fun DateLangPage() {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val lang = L.current
-    var language by remember { mutableIntStateOf(prefs.language) }
+    var language by remember { mutableIntStateOf(prefs.language.let { if (it in 0..2) it else 0 }) }
     var fullEra by remember { mutableStateOf(prefs.fullEra) }
     var cnNumerals by remember { mutableStateOf(prefs.chineseNumerals) }
     var showSeconds by remember { mutableStateOf(prefs.showSeconds) }
@@ -845,14 +845,14 @@ private fun DateLangPage() {
     }
 
     Section(tr("语言", "語言", "Language")) {
-        ChoiceRow(listOf(tr("跟随系统", "跟隨系統", "System"), "简体", "繁體", "English"), language) {
+        ChoiceRow(listOf(tr("跟随系统", "跟隨系統", "System"), "简体", "繁體"), language) {
             language = it
             prefs.language = it
             L.refresh(ctx)
             refreshOutputs()
         }
         Spacer(Modifier.height(6.dp))
-        Paragraph(tr("默认跟随系统语言；在这里手动选择后以手动为准。", "預設跟隨系統語言；在這裡手動選擇後以手動為準。", "Follows the system by default; a manual choice here takes priority."))
+        Paragraph(tr("只支持简体、繁體。默认跟随系统：繁体系统用繁體，其它用简体；在这里手动选择后以手动为准。", "只支援簡體、繁體。預設跟隨系統：繁體系統用繁體，其他用簡體；在這裡手動選擇後以手動為準。", "Simplified / Traditional Chinese only."))
     }
     Section(tr("纪年", "紀年", "Era name")) {
         ChoiceRow(
@@ -1318,97 +1318,6 @@ private fun PermissionsPage(tick: Int) {
             )
         }
     }
-    RunStatusSection(t)
-    Section(tr("关于进程守护", "關於程序守護", "About keep-alive")) {
-        Paragraph(
-            tr(
-                "本应用不会出现在最近任务里。崩溃或被系统回收后会自动重启；但在“设置/手机管家”里强行停止后，Android 会冻结所有自动恢复，需要重新打开 App 或重启手机。",
-                "本應用不會出現在最近任務裡。當機或被系統回收後會自動重啟；但在「設定/手機管家」裡強制停止後，Android 會凍結所有自動恢復，需要重新開啟 App 或重新開機。",
-                "The app is hidden from Recents and restarts itself after crashes. A Force stop freezes it until you open the app again or reboot.",
-            ),
-        )
-    }
-}
-
-/**
- * 运行状态：用来确认名言、必应壁纸、天气、定位有没有自动更新，以及闹钟为什么显示 / 不显示。
- * 每次回到这个页面都会刷新。
- */
-@Composable
-private fun RunStatusSection(tick: Int) {
-    val ctx = LocalContext.current
-    val p = remember(tick) { Prefs(ctx) }
-    val weather by Weather.state.collectAsState()
-    var refresh by remember { mutableIntStateOf(0) }
-    val now = System.currentTimeMillis()
-    fun fmt(ms: Long): String {
-        if (ms <= 0L) return tr("还没有", "還沒有", "Never")
-        val t = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDateTime()
-        val mins = (now - ms) / 60_000
-        val ago = when {
-            mins < 1 -> tr("刚刚", "剛剛", "just now")
-            mins < 60 -> tr("$mins 分钟前", "$mins 分鐘前", "$mins min ago")
-            mins < 1440 -> tr("${mins / 60} 小时前", "${mins / 60} 小時前", "${mins / 60} h ago")
-            else -> tr("${mins / 1440} 天前", "${mins / 1440} 天前", "${mins / 1440} d ago")
-        }
-        return "%02d-%02d %02d:%02d（%s）".format(t.monthValue, t.dayOfMonth, t.hour, t.minute, ago)
-    }
-    val lines = remember(tick, refresh, weather) {
-        buildString {
-            append(tr("名言上次更换：", "名言上次更換：", "Quote changed: ")).append(fmt(p.quoteChangedAt)).append('\n')
-            append(tr("　规则：每次熄屏换一句；亮屏期间每 30 分钟换一句", "　規則：每次熄屏換一句；亮屏期間每 30 分鐘換一句", "  Rule: new quote on every screen-off, and every 30 min while on")).append("\n\n")
-            if (p.wallpaperMode == Wallpaper.MODE_BING) {
-                val total = runCatching { org.json.JSONArray(p.bingList).length() }.getOrDefault(0)
-                append(tr("必应壁纸上次更换：", "Bing 桌布上次更換：", "Bing wallpaper changed: ")).append(fmt(p.bingChangedAt)).append('\n')
-                append(tr("当前第 ", "目前第 ", "Showing ")).append(p.bingIndex + 1).append(" / ").append(total)
-                    .append(tr(" 张（最近十几天的必应壁纸轮换）", " 張（最近十幾天的 Bing 桌布輪換）", " (recent Bing wallpapers)")).append('\n')
-                append(tr("　规则：每次熄屏换一张；亮屏期间每 30 分钟换一张", "　規則：每次熄屏換一張；亮屏期間每 30 分鐘換一張", "  Rule: new wallpaper on every screen-off, and every 30 min while on")).append("\n\n")
-            } else {
-                append(tr("必应壁纸：未使用（壁纸页选“必应每日”后生效）", "Bing 桌布：未使用（桌布頁選「Bing 每日」後生效）", "Bing wallpaper: not in use")).append("\n\n")
-            }
-            append(tr("天气上次更新：", "天氣上次更新：", "Weather updated: ")).append(fmt(weather?.fetchedAt ?: 0L)).append('\n')
-            append(tr("上次定位：", "上次定位：", "Last located: ")).append(fmt(p.locatedAt)).append('\n')
-            val src = p.locSource
-            if (src.isNotBlank()) {
-                val name = when {
-                    src.startsWith("passive") -> tr("被动定位（其它应用的位置）", "被動定位（其他應用程式的位置）", "passive (from other apps)")
-                    src == "gps" -> "GPS"
-                    src == "network" -> tr("网络定位（Wi-Fi/基站）", "網路定位（Wi-Fi/基地台）", "network (Wi-Fi/cell)")
-                    src == "fused" -> tr("融合定位", "融合定位", "fused")
-                    else -> src
-                }
-                append(tr("　方式：", "　方式：", "  Source: ")).append(name)
-                val geoSrc = when (Geo.lastSource) {
-                    "amap" -> tr("高德", "高德", "AMap")
-                    "offline" -> tr("离线区县表", "離線區縣表", "offline table")
-                    "bigdatacloud" -> "BigDataCloud"
-                    else -> ""
-                }
-                if (geoSrc.isNotEmpty()) append(tr("；地名来自", "；地名來自", "; place from ")).append(geoSrc)
-                if (p.locAccuracy >= 0) append(tr("，精度约 ", "，精度約 ", ", about ")).append(p.locAccuracy).append(tr(" 米", " 公尺", " m"))
-                append('\n')
-            }
-            append(tr("锁屏时可定位：", "鎖定時可定位：", "Can locate when locked: "))
-                .append(if (LockService.locationActive || Weather.hasBackgroundLocation(ctx)) tr("是", "是", "Yes") else tr("否（打开一次 App 后生效）", "否（開啟一次 App 後生效）", "No (open the app once)"))
-                .append("\n\n")
-            append(tr("小组件样式：", "小工具樣式：", "Widget style: ")).append(
-                when (p.widgetStyle) {
-                    1 -> tr("深色字（透明）", "深色字（透明）", "Dark (transparent)")
-                    else -> tr("白字（透明）", "白字（透明）", "Light (transparent)")
-                },
-            ).append('\n')
-            val placed = Widgets.placedCount(ctx)
-            append(tr("本应用在桌面上的小组件：", "本應用程式在桌面上的小工具：", "Widgets placed by this app: ")).append(placed).append('\n')
-            append(tr("小组件上次更新：", "小工具上次更新：", "Widget updated: ")).append(fmt(Widgets.lastUpdate)).append('\n')
-            Widgets.lastError?.let { append(tr("小组件更新出错：", "小工具更新出錯：", "Widget error: ")).append(it).append('\n') }
-            append(tr("本应用：", "本應用程式：", "This app: ")).append(ctx.packageName).append(" v").append(Maintenance.versionName(ctx)).append("\n\n")
-            append(Alarms.diagnose(ctx))
-        }
-    }
-    Section(tr("运行状态", "執行狀態", "Status")) {
-        Text(lines, color = Color.White, fontSize = 13.sp, lineHeight = 20.sp)
-        TextButton(onClick = { refresh++ }) { Text(tr("刷新", "重新整理", "Refresh"), color = Accent) }
-    }
 }
 
 // =====================================================================
@@ -1429,9 +1338,30 @@ private fun AboutPage() {
     Section(tr("作者", "作者", "Author")) {
         Text(AppConfig.AUTHOR, color = Color.White, fontSize = 15.sp)
         TextButton(onClick = { Maintenance.openUrl(ctx, AppConfig.BLOG) }) { Text(AppConfig.BLOG, color = Accent) }
+        // GitHub、Telegram：在 Config.kt 里填了地址才显示
+        listOf(
+            Triple(R.drawable.ic_link_code, "GitHub", AppConfig.GITHUB_URL),
+            Triple(R.drawable.ic_link_plane, "Telegram", AppConfig.TELEGRAM_URL),
+        ).filter { it.third.isNotBlank() }.forEach { (icon, name, url) ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { Maintenance.openUrl(ctx, url) }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(painterResource(icon), name, tint = Accent, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(name, color = Color.White, fontSize = 15.sp)
+                    Text(url.removePrefix("https://").removePrefix("http://"), color = SubText, fontSize = 12.sp)
+                }
+            }
+        }
     }
     Section(tr("版权", "版權", "Copyright")) {
-        Paragraph("© 2026 ${AppConfig.AUTHOR}. All rights reserved.")
+        Paragraph("© ${LocalDate.now().year} ${AppConfig.AUTHOR}. All rights reserved.")
     }
 }
 

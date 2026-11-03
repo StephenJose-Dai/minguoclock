@@ -5,6 +5,10 @@ object AppConfig {
     const val AUTHOR = "StephenJose_Dai"
     const val BLOG = "https://daishenghui.club"
 
+    /** “关于”页的 GitHub、Telegram 地址：填了才显示，留空就不显示 */
+    const val GITHUB_URL = ""   // 例如 https://github.com/你的用户名/minguoclock
+    const val TELEGRAM_URL = "" // 例如 https://t.me/你的用户名或频道名
+
     /** 反馈：填了邮箱就优先发邮件，否则打开反馈网页 */
     const val FEEDBACK_EMAIL = ""
     const val FEEDBACK_URL = "https://daishenghui.club"
