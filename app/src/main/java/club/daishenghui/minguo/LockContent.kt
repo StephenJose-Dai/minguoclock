@@ -226,6 +226,7 @@ fun LockContent(
         if (requirePin && Security.hasPin(ctx)) showPin = true else onUnlock()
     }
 
+    val is24 = DateFormat.is24HourFormat(ctx) // 时间显示要用（12/24 小时制）
     // 闹钟元素已取消（系统不开放闹钟列表，无法准确判断），锁屏上不再显示
     val alarm: String? = null
 
